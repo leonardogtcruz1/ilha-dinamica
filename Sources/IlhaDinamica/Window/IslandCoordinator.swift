@@ -144,14 +144,14 @@ final class IslandCoordinator: ObservableObject {
                     height: geometry.hasNotch ? 164 : 134
                 )
             }
-            if case .volume = event.kind {
+            if event.kind.isInteractiveControlHUD {
                 if geometry.hasNotch {
                     return CGSize(
                         width: max(geometry.notchWidth + 226, 404),
-                        height: max(geometry.notchHeight + 60, 92)
+                        height: max(geometry.notchHeight + 62, 94)
                     )
                 } else {
-                    return CGSize(width: 368, height: 72)
+                    return CGSize(width: 368, height: 74)
                 }
             }
             if geometry.hasNotch {
@@ -502,7 +502,9 @@ final class IslandCoordinator: ObservableObject {
         }
 
         toastDismissTask?.cancel()
+        toastDismissTask = nil
         hoverExpandTask?.cancel()
+        hoverExpandTask = nil
 
         let resolvedDuration = duration ?? (event.kind.isQuickHUD ? 1.6 : 3.2)
 
@@ -510,10 +512,25 @@ final class IslandCoordinator: ObservableObject {
             mode = .toast(event)
         }
 
+        let holdOpenForPointer = event.kind.isInteractiveControlHUD
+            && (wasMouseInside || audio.isDraggingVolume || audio.isDraggingBrightness)
+        if !holdOpenForPointer {
+            scheduleToastDismiss(for: event.id, after: resolvedDuration)
+        }
+    }
+
+    private func scheduleToastDismiss(for eventID: UUID, after delaySeconds: TimeInterval) {
+        toastDismissTask?.cancel()
         toastDismissTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: UInt64(resolvedDuration * 1_000_000_000))
+            try? await Task.sleep(nanoseconds: UInt64(max(0.05, delaySeconds) * 1_000_000_000))
             guard !Task.isCancelled, let self else { return }
-            if case .toast(let current) = self.mode, current.id == event.id {
+            self.toastDismissTask = nil
+            if case .toast(let current) = self.mode, current.id == eventID {
+                guard !self.audio.isDraggingVolume,
+                      !self.audio.isDraggingBrightness,
+                      !(current.kind.isInteractiveControlHUD && self.wasMouseInside) else {
+                    return
+                }
                 withAnimation(self.settings.collapseSpring) {
                     self.mode = self.restingMode
                 }
@@ -753,12 +770,24 @@ final class IslandCoordinator: ObservableObject {
             NSCursor.arrow.set()
         }
 
+        let interactiveHudEvent: ToastEvent? = {
+            if case .toast(let event) = mode, event.kind.isInteractiveControlHUD {
+                return event
+            }
+            return nil
+        }()
+
         if isInside {
             wasMouseInside = true
             hoverCollapseTask?.cancel()
             hoverCollapseTask = nil
 
-            if mode != .expanded
+            if interactiveHudEvent != nil {
+                toastDismissTask?.cancel()
+                toastDismissTask = nil
+                hoverExpandTask?.cancel()
+                hoverExpandTask = nil
+            } else if mode != .expanded
                 && settings.openOnHover
                 && !mousePressed
                 && !suppressHoverExpandUntilExit {
@@ -777,7 +806,14 @@ final class IslandCoordinator: ObservableObject {
             hoverExpandTask?.cancel()
             hoverExpandTask = nil
 
-            if mode == .expanded && !isPinned && !isMirrorOpen {
+            if let hudEvent = interactiveHudEvent {
+                if isInteractingWithControls {
+                    toastDismissTask?.cancel()
+                    toastDismissTask = nil
+                } else if toastDismissTask == nil {
+                    scheduleToastDismiss(for: hudEvent.id, after: 0.85)
+                }
+            } else if mode == .expanded && !isPinned && !isMirrorOpen {
                 if isInteractingWithControls {
                     hoverCollapseTask?.cancel()
                     hoverCollapseTask = nil
@@ -833,6 +869,9 @@ final class IslandCoordinator: ObservableObject {
             }
             guard !Task.isCancelled, let self else { return }
             self.hoverExpandTask = nil
+            if case .toast(let event) = self.mode, event.kind.isInteractiveControlHUD {
+                return
+            }
             guard self.wasMouseInside,
                   NSEvent.pressedMouseButtons == 0,
                   !self.suppressHoverExpandUntilExit,

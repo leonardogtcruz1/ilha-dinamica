@@ -175,11 +175,17 @@ final class AudioControlService: ObservableObject {
         let clamped = max(0, min(1, newVolume))
         volume = clamped
 
-        guard let dev = defaultDeviceID(isInput: false) else { return }
+        guard let dev = defaultDeviceID(isInput: false) else {
+            lastObservedVolume = clamped
+            lastObservedMuted = isMuted
+            return
+        }
         if isMuted && clamped > 0 {
             setDeviceMute(dev, scope: kAudioDevicePropertyScopeOutput, muted: false)
             isMuted = false
         }
+        lastObservedVolume = clamped
+        lastObservedMuted = isMuted
         setDeviceVolume(dev, scope: kAudioDevicePropertyScopeOutput, value: clamped)
     }
 

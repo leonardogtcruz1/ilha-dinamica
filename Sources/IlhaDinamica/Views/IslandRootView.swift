@@ -204,6 +204,9 @@ struct IslandRootView: View {
             )
             .contentShape(islandShape)
             .onTapGesture {
+                if case .toast(let event) = coordinator.mode, event.kind.isInteractiveControlHUD {
+                    return
+                }
                 if coordinator.mode != .expanded {
                     coordinator.expand()
                 }
@@ -244,6 +247,8 @@ struct IslandRootView: View {
                 geometry: coordinator.geometry,
                 music: music,
                 battery: battery,
+                audio: audio,
+                coordinator: coordinator,
                 settings: settings
             )
 

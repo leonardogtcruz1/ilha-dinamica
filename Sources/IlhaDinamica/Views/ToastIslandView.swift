@@ -6,6 +6,8 @@ struct ToastIslandView: View {
     let geometry: NotchGeometry
     @ObservedObject var music: MusicService
     @ObservedObject var battery: BatteryService
+    @ObservedObject var audio: AudioControlService
+    @ObservedObject var coordinator: IslandCoordinator
     @ObservedObject var settings: SettingsStore
 
     var body: some View {
@@ -15,20 +17,10 @@ struct ToastIslandView: View {
                     .frame(height: geometry.notchHeight - 2)
             }
 
-            if case .volume(let level, let isMuted, let deviceName, let deviceIcon) = event.kind {
-                volumeHudRow(
-                    level: level,
-                    isMuted: isMuted,
-                    deviceName: deviceName,
-                    deviceIcon: deviceIcon
-                )
-            } else if case .brightness(let level) = event.kind {
-                hudBarRow(
-                    icon: "sun.max.fill",
-                    title: "Brilho",
-                    value: level,
-                    tint: settings.resolvedSliderColor(fallback: Color(red: 1.0, green: 0.78, blue: 0.24))
-                )
+            if case .volume = event.kind {
+                volumeHudRow()
+            } else if case .brightness = event.kind {
+                brightnessHudRow()
             } else if case .charging(let percent, let watts) = event.kind {
                 chargingConnectedCard(
                     fallbackPercent: percent,
@@ -58,69 +50,92 @@ struct ToastIslandView: View {
                 standardBannerRow
             }
         }
+        .onDisappear {
+            if !audio.isDraggingVolume {
+                audio.isHoveringVolume = false
+            }
+            if !audio.isDraggingBrightness {
+                audio.isHoveringBrightness = false
+            }
+        }
     }
 
-    private func volumeHudRow(
-        level: Float,
-        isMuted: Bool,
-        deviceName: String,
-        deviceIcon: String
-    ) -> some View {
-        let tint: Color = isMuted ? .red : settings.resolvedSliderColor(fallback: Color(red: 0.28, green: 0.88, blue: 0.54))
+    private func volumeHudRow() -> some View {
+        let isMuted = audio.isMuted
+        let level = audio.volume
+        let deviceName = audio.defaultOutputName
+        let deviceIcon = audio.defaultOutputIconName
+        let tint: Color = isMuted
+            ? .red
+            : settings.resolvedSliderColor(fallback: Color(red: 0.28, green: 0.88, blue: 0.54))
         let displayValue: Float = isMuted ? 0 : level
         let badgeIcon = isMuted ? "speaker.slash.fill" : deviceIcon
+        let canOpenAudioTab = settings.enabledTabs.contains(.audio)
 
         return HStack(spacing: 12) {
-            ZStack {
-                Circle()
-                    .fill(tint.opacity(0.20))
-                    .frame(width: 34, height: 34)
-                Image(systemName: badgeIcon)
-                    .font(.system(size: 14.5, weight: .semibold))
-                    .foregroundStyle(tint)
+            Button {
+                audio.toggleMute()
+            } label: {
+                ZStack {
+                    Circle()
+                        .fill(tint.opacity(0.20))
+                        .frame(width: 34, height: 34)
+                    Image(systemName: badgeIcon)
+                        .font(.system(size: 14.5, weight: .semibold))
+                        .foregroundStyle(tint)
+                }
             }
+            .buttonStyle(.plain)
+            .help(isMuted ? "Ativar som" : "Silenciar")
 
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
                     Text(isMuted ? "Sem som" : "Volume")
                         .font(.system(size: 11.5, weight: .bold))
                         .foregroundStyle(.white)
 
-                    HStack(spacing: 4) {
-                        Image(systemName: deviceIcon)
-                            .font(.system(size: 9, weight: .semibold))
-                            .foregroundStyle(tint)
-                        Text(deviceName)
-                            .font(.system(size: 10.5, weight: .semibold))
-                            .foregroundStyle(Color.white.opacity(0.88))
-                            .lineLimit(1)
+                    if canOpenAudioTab {
+                        Button {
+                            coordinator.expand(tab: .audio)
+                        } label: {
+                            devicePillLabel(deviceIcon: deviceIcon, deviceName: deviceName, tint: tint)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Abrir aba de Áudio e Brilho")
+                    } else {
+                        devicePillLabel(deviceIcon: deviceIcon, deviceName: deviceName, tint: tint)
                     }
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 2.5)
-                    .background(Color.white.opacity(0.11), in: Capsule())
 
                     Spacer(minLength: 4)
 
                     Text(isMuted ? "Mudo" : "\(Int((displayValue * 100).rounded()))%")
                         .font(.system(size: 11.5, weight: .bold, design: .rounded).monospacedDigit())
                         .foregroundStyle(tint)
-                }
 
-                GeometryReader { geo in
-                    let w = max(1, geo.size.width)
-                    ZStack(alignment: .leading) {
-                        Capsule(style: .continuous)
-                            .fill(Color.white.opacity(0.16))
-                        Capsule(style: .continuous)
-                            .fill(tint)
-                            .frame(width: w * CGFloat(max(0, min(1, displayValue))))
+                    if canOpenAudioTab {
+                        openAudioTabButton
                     }
                 }
-                .frame(height: 6)
+
+                interactiveHudSlider(
+                    value: displayValue,
+                    tint: tint,
+                    isDragging: audio.isDraggingVolume,
+                    isHovering: audio.isHoveringVolume,
+                    overscroll: audio.volumeOverscroll,
+                    onHoverChange: { audio.isHoveringVolume = $0 },
+                    onDragChange: { rawRatio, locX in
+                        audio.updateVolumeDrag(rawRatio: rawRatio, locationX: locX)
+                    },
+                    onDragEnd: { rawRatio in
+                        audio.endVolumeDrag(rawRatio: rawRatio)
+                    }
+                )
             }
         }
         .padding(.horizontal, geometry.hasNotch ? 22 : 18)
         .frame(maxHeight: .infinity)
+        .textSelection(.disabled)
     }
 
     private func chargingConnectedCard(
@@ -573,43 +588,162 @@ struct ToastIslandView: View {
         .frame(maxHeight: .infinity)
     }
 
-    private func hudBarRow(icon: String, title: String, value: Float, tint: Color) -> some View {
-        HStack(spacing: 12) {
+    private func brightnessHudRow() -> some View {
+        let tint = settings.resolvedSliderColor(fallback: Color(red: 1.0, green: 0.78, blue: 0.24))
+        let value = audio.brightness
+        let canOpenAudioTab = settings.enabledTabs.contains(.audio)
+
+        return HStack(spacing: 12) {
             ZStack {
                 Circle()
                     .fill(tint.opacity(0.20))
-                    .frame(width: 30, height: 30)
-                Image(systemName: icon)
-                    .font(.system(size: 13.5, weight: .semibold))
+                    .frame(width: 34, height: 34)
+                Image(systemName: "sun.max.fill")
+                    .font(.system(size: 14.5, weight: .semibold))
                     .foregroundStyle(tint)
+                    .rotationEffect(.degrees(Double(value) * 180.0))
             }
 
-            VStack(alignment: .leading, spacing: 5) {
-                HStack {
-                    Text(title)
-                        .font(.system(size: 11.5, weight: .semibold))
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Text("Brilho")
+                        .font(.system(size: 11.5, weight: .bold))
                         .foregroundStyle(.white)
-                    Spacer()
-                    Text("\(Int((value * 100).rounded()))%")
-                        .font(.system(size: 11, weight: .bold, design: .rounded).monospacedDigit())
-                        .foregroundStyle(tint)
-                }
 
-                GeometryReader { geo in
-                    let w = max(1, geo.size.width)
-                    ZStack(alignment: .leading) {
-                        Capsule(style: .continuous)
-                            .fill(Color.white.opacity(0.16))
-                        Capsule(style: .continuous)
-                            .fill(tint)
-                            .frame(width: w * CGFloat(max(0, min(1, value))))
+                    Spacer(minLength: 4)
+
+                    Text("\(Int((value * 100).rounded()))%")
+                        .font(.system(size: 11.5, weight: .bold, design: .rounded).monospacedDigit())
+                        .foregroundStyle(tint)
+
+                    if canOpenAudioTab {
+                        openAudioTabButton
                     }
                 }
-                .frame(height: 6)
+
+                interactiveHudSlider(
+                    value: value,
+                    tint: tint,
+                    isDragging: audio.isDraggingBrightness,
+                    isHovering: audio.isHoveringBrightness,
+                    overscroll: audio.brightnessOverscroll,
+                    onHoverChange: { audio.isHoveringBrightness = $0 },
+                    onDragChange: { rawRatio, locX in
+                        audio.updateBrightnessDrag(rawRatio: rawRatio, locationX: locX)
+                    },
+                    onDragEnd: { rawRatio in
+                        audio.endBrightnessDrag(rawRatio: rawRatio)
+                    }
+                )
             }
         }
-        .padding(.horizontal, geometry.hasNotch ? 24 : 18)
+        .padding(.horizontal, geometry.hasNotch ? 22 : 18)
         .frame(maxHeight: .infinity)
+        .textSelection(.disabled)
+    }
+
+    private var openAudioTabButton: some View {
+        Button {
+            coordinator.expand(tab: .audio)
+        } label: {
+            Image(systemName: "slider.horizontal.3")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(Color.white.opacity(0.84))
+                .frame(width: 22, height: 22)
+                .background(Color.white.opacity(0.12), in: Circle())
+        }
+        .buttonStyle(.plain)
+        .help("Abrir aba de Áudio e Brilho")
+    }
+
+    private func devicePillLabel(deviceIcon: String, deviceName: String, tint: Color) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: deviceIcon)
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(tint)
+            Text(deviceName)
+                .font(.system(size: 10.5, weight: .semibold))
+                .foregroundStyle(Color.white.opacity(0.88))
+                .lineLimit(1)
+        }
+        .padding(.horizontal, 7)
+        .padding(.vertical, 2.5)
+        .background(Color.white.opacity(0.11), in: Capsule())
+    }
+
+    private func interactiveHudSlider(
+        value: Float,
+        tint: Color,
+        isDragging: Bool,
+        isHovering: Bool,
+        overscroll: CGFloat,
+        onHoverChange: @escaping (Bool) -> Void,
+        onDragChange: @escaping (Float, CGFloat) -> Void,
+        onDragEnd: @escaping (Float) -> Void
+    ) -> some View {
+        GeometryReader { geo in
+            let w = max(1, geo.size.width)
+            let clampedVal = CGFloat(max(0, min(1, value)))
+            let tipX = w * clampedVal
+            let trackHeight: CGFloat = isDragging ? 9.5 : (isHovering ? 8 : 6.5)
+            let fillWidth: CGFloat = clampedVal <= 0.001 ? 0 : max(trackHeight * 0.7, tipX)
+            let showKnob = isHovering || isDragging
+            let knobWidth: CGFloat = isDragging ? 20 : 14
+            let knobHeight: CGFloat = isDragging ? 14 : 12
+            let knobCenterX = min(max(knobWidth / 2, tipX), w - knobWidth / 2)
+            let stretchX = 1.0 + abs(overscroll) * 0.035
+            let squishY = 1.0 - abs(overscroll) * 0.08
+
+            ZStack(alignment: .leading) {
+                Capsule(style: .continuous)
+                    .fill(Color.white.opacity(isDragging ? 0.22 : 0.16))
+                    .frame(width: w, height: trackHeight)
+
+                if fillWidth > 0 {
+                    Capsule(style: .continuous)
+                        .fill(tint)
+                        .frame(width: min(w, fillWidth), height: trackHeight)
+                        .shadow(color: isDragging ? tint.opacity(0.42) : .clear, radius: 6, x: 0, y: 0)
+                }
+
+                if showKnob {
+                    Capsule(style: .continuous)
+                        .fill(Color.white.opacity(isDragging ? 0.96 : 0.88))
+                        .overlay(
+                            Capsule(style: .continuous)
+                                .stroke(Color.white.opacity(0.75), lineWidth: 0.75)
+                        )
+                        .frame(width: knobWidth, height: knobHeight)
+                        .shadow(color: Color.black.opacity(0.32), radius: 3, y: 1)
+                        .position(x: knobCenterX, y: 10)
+                }
+            }
+            .frame(width: w, height: 20)
+            .scaleEffect(x: stretchX, y: squishY, anchor: overscroll >= 0 ? .leading : .trailing)
+            .offset(x: overscroll * 3.5)
+            .animation(.spring(response: 0.24, dampingFraction: 0.68), value: isDragging)
+            .animation(.spring(response: 0.22, dampingFraction: 0.74), value: isHovering)
+            .animation(.spring(response: 0.30, dampingFraction: 0.58), value: overscroll)
+            .contentShape(Rectangle())
+            .onHover { hovering in
+                if hovering {
+                    NSCursor.arrow.set()
+                }
+                onHoverChange(hovering)
+            }
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { drag in
+                        let rawRatio = Float(drag.location.x / w)
+                        onDragChange(rawRatio, drag.location.x)
+                    }
+                    .onEnded { drag in
+                        let rawRatio = Float(drag.location.x / w)
+                        onDragEnd(rawRatio)
+                    }
+            )
+        }
+        .frame(height: 20)
     }
 
     private var accentColor: Color {

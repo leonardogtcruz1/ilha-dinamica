@@ -320,6 +320,15 @@ enum ToastKind: Equatable {
             return false
         }
     }
+
+    var isInteractiveControlHUD: Bool {
+        switch self {
+        case .volume, .brightness:
+            return true
+        default:
+            return false
+        }
+    }
 }
 
 struct ToastEvent: Equatable, Identifiable {
