@@ -720,23 +720,23 @@ final class IslandCoordinator: ObservableObject {
             wasInteractingInside = false
         }
 
+        let hasActiveSystemDrag = mousePressed
+            && NSPasteboard(name: .drag).changeCount != lastIdleDragPasteboardChangeCount
         let hasActiveExternalFileDrag = mousePressed
             && startedOutside
             && settings.enableShelfModule
             && Self.dragPasteboardHasDropPayload(sinceIdleChangeCount: lastIdleDragPasteboardChangeCount)
 
+        if hasActiveSystemDrag || hasActiveExternalFileDrag {
+            ensureDragSafeLayer()
+        }
+
         if hasActiveExternalFileDrag && isInside {
-            reattachTask?.cancel()
-            reattachTask = nil
-            if !isDetachedForDrag {
-                OverlaySpaceManager.shared.detach(window: panel)
-                panel.orderFrontRegardless()
-                isDetachedForDrag = true
-            }
+            ensureDragSafeLayer()
             hoverCollapseTask?.cancel()
             hoverCollapseTask = nil
             wasMouseInside = true
-            if mode != .expanded || activeTab != .shelf {
+            if mode != .expanded || activeTab != .shelf || isShowingPresetHome {
                 expand(tab: .shelf)
             }
         } else if isInside && !isDetachedForDrag && !hasActiveExternalFileDrag {
@@ -824,15 +824,31 @@ final class IslandCoordinator: ObservableObject {
         }
     }
 
+    func ensureDragSafeLayer() {
+        guard let panel else { return }
+        reattachTask?.cancel()
+        reattachTask = nil
+        if !isDetachedForDrag {
+            OverlaySpaceManager.shared.detach(window: panel)
+            panel.level = IslandPanel.dragSafeLevel
+            panel.orderFrontRegardless()
+            isDetachedForDrag = true
+        } else if panel.level != IslandPanel.dragSafeLevel {
+            panel.level = IslandPanel.dragSafeLevel
+        }
+    }
+
     private func scheduleReattachAfterDrag() {
         guard isDetachedForDrag, reattachTask == nil else { return }
         reattachTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 150_000_000)
+            try? await Task.sleep(nanoseconds: 220_000_000)
             guard !Task.isCancelled, let self, let panel = self.panel else { return }
+            self.reattachTask = nil
             if NSEvent.pressedMouseButtons == 0 {
+                panel.level = IslandPanel.overlayLevel
                 OverlaySpaceManager.shared.attach(window: panel)
+                panel.orderFrontRegardless()
                 self.isDetachedForDrag = false
-                self.reattachTask = nil
             }
         }
     }
@@ -849,11 +865,28 @@ final class IslandCoordinator: ObservableObject {
             "NSFilenamesPboardType",
             "public.png",
             "public.jpeg",
+            "public.heic",
+            "public.heif",
+            "public.webp",
+            "com.compuserve.gif",
+            "public.svg-image",
             "public.image",
+            "public.movie",
+            "public.mpeg-4",
+            "com.apple.quicktime-movie",
+            "com.adobe.pdf",
+            "public.data",
             "com.apple.pasteboard.promised-file-url",
-            "com.apple.NSFilePromiseItemMetaData"
+            "com.apple.NSFilePromiseItemMetaData",
+            "com.apple.NSFilePromiseItemMetaData.v2",
+            "com.apple.finder.node"
         ]
-        if types.contains(where: { knownTypes.contains($0.rawValue) }) {
+        if types.contains(where: {
+            knownTypes.contains($0.rawValue)
+                || $0.rawValue.localizedCaseInsensitiveContains("image")
+                || $0.rawValue.localizedCaseInsensitiveContains("file-url")
+                || $0.rawValue.localizedCaseInsensitiveContains("promise")
+        }) {
             return true
         }
         let promiseTypes = Set(NSFilePromiseReceiver.readableDraggedTypes)

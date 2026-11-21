@@ -284,10 +284,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         }
         panel.onDragEntered = { [weak self] in
             guard let self, self.settings.enableShelfModule, self.coordinator.isPointInsideIsland() else { return }
+            self.coordinator.ensureDragSafeLayer()
             if !self.shelf.isDropTargeted {
                 self.shelf.isDropTargeted = true
             }
-            if self.coordinator.mode != .expanded || self.coordinator.activeTab != .shelf {
+            if self.coordinator.mode != .expanded
+                || self.coordinator.activeTab != .shelf
+                || self.coordinator.isShowingPresetHome {
                 self.coordinator.expand(tab: .shelf)
             }
             self.shelf.isAirDropDropTargeted = self.isCursorInAirDropZone()

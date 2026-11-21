@@ -3,6 +3,8 @@ import SwiftUI
 
 final class IslandPanel: NSPanel {
     static let canvasSize = CGSize(width: 660, height: 450)
+    static let overlayLevel = NSWindow.Level(rawValue: 2006)
+    static let dragSafeLevel = NSWindow.Level.statusBar
 
     var allowsKeyFocus: Bool = false
     var isPointInsideIsland: ((CGPoint) -> Bool)?
@@ -25,7 +27,7 @@ final class IslandPanel: NSPanel {
         isOpaque = false
         backgroundColor = .clear
         hasShadow = false
-        level = NSWindow.Level(rawValue: 2006)
+        level = Self.overlayLevel
         collectionBehavior = [
             .stationary,
             .ignoresCycle
@@ -90,9 +92,16 @@ private final class DropContainerView: NSView {
             NSPasteboard.PasteboardType("NSFilenamesPboardType"),
             NSPasteboard.PasteboardType("public.png"),
             NSPasteboard.PasteboardType("public.jpeg"),
+            NSPasteboard.PasteboardType("public.heic"),
+            NSPasteboard.PasteboardType("public.heif"),
+            NSPasteboard.PasteboardType("public.webp"),
+            NSPasteboard.PasteboardType("com.compuserve.gif"),
+            NSPasteboard.PasteboardType("public.svg-image"),
             NSPasteboard.PasteboardType("public.image"),
+            NSPasteboard.PasteboardType("public.data"),
             NSPasteboard.PasteboardType("com.apple.pasteboard.promised-file-url"),
-            NSPasteboard.PasteboardType("com.apple.NSFilePromiseItemMetaData")
+            NSPasteboard.PasteboardType("com.apple.NSFilePromiseItemMetaData"),
+            NSPasteboard.PasteboardType("com.apple.NSFilePromiseItemMetaData.v2")
         ]
         types.append(contentsOf: NSFilePromiseReceiver.readableDraggedTypes.map { NSPasteboard.PasteboardType($0) })
         registerForDraggedTypes(types)
