@@ -1,0 +1,331 @@
+import AppKit
+import SwiftUI
+
+struct MusicExpandedView: View {
+    @ObservedObject var music: MusicService
+
+    private var displayedElapsed: Double {
+        music.isScrubbing ? music.scrubSeconds : music.elapsedTime
+    }
+
+    private var progressFraction: Double {
+        guard music.duration > 0 else { return 0 }
+        return max(0, min(1, displayedElapsed / music.duration))
+    }
+
+    var body: some View {
+        Group {
+            if music.hasTrack {
+                activeTrackView
+            } else if music.automationDenied {
+                automationNoticeView
+            } else {
+                emptyStateView
+            }
+        }
+        .padding(.top, 12)
+    }
+
+    private var activeTrackView: some View {
+        HStack(spacing: 16) {
+            Button {
+                music.openActivePlayer()
+            } label: {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .fill(music.accentColor.opacity(0.35))
+                        .frame(width: 82, height: 82)
+                        .blur(radius: 14)
+
+                    if let artwork = music.artwork {
+                        Image(nsImage: artwork)
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                            .frame(width: 82, height: 82)
+                            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                    .stroke(Color.white.opacity(0.14), lineWidth: 0.75)
+                            )
+                    } else {
+                        ZStack {
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .fill(music.accentColor.opacity(0.22))
+                            Image(systemName: "music.note")
+                                .font(.system(size: 28, weight: .semibold))
+                                .foregroundStyle(music.accentColor)
+                        }
+                        .frame(width: 82, height: 82)
+                    }
+                }
+            }
+            .buttonStyle(.plain)
+            .help("Abrir \(music.player.displayName)")
+
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .top, spacing: 8) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(music.title)
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .lineLimit(1)
+
+                        Text(subtitleText)
+                            .font(.system(size: 11.5, weight: .medium))
+                            .foregroundStyle(Color.white.opacity(0.62))
+                            .lineLimit(1)
+                    }
+                    .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+
+                    HStack(spacing: 6) {
+                        Text(music.player.displayName)
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(music.accentColor)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 3)
+                            .background(music.accentColor.opacity(0.15), in: Capsule())
+
+                        AudioVisualizerView(
+                            isPlaying: music.isPlaying,
+                            accentColor: music.accentColor,
+                            barCount: 4,
+                            barWidth: 2.3,
+                            maxHeight: 14,
+                            spacing: 2.0
+                        )
+                    }
+                    .fixedSize(horizontal: true, vertical: false)
+                    .padding(.trailing, 2)
+                }
+
+                VStack(spacing: 5) {
+                    scrubBar
+
+                    HStack {
+                        Text(formatTime(displayedElapsed))
+                        Spacer()
+                        Text(formatTime(music.duration))
+                    }
+                    .font(.system(size: 10, weight: .medium, design: .rounded).monospacedDigit())
+                    .foregroundStyle(Color.white.opacity(0.48))
+                }
+
+                HStack(spacing: 22) {
+                    Spacer()
+
+                    Button {
+                        music.previousTrack()
+                    } label: {
+                        Image(systemName: "backward.fill")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(.white.opacity(0.9))
+                            .frame(width: 30, height: 30)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+
+                    Button {
+                        music.togglePlayPause()
+                    } label: {
+                        ZStack {
+                            Circle()
+                                .fill(Color.white)
+                                .frame(width: 34, height: 34)
+                            Image(systemName: music.isPlaying ? "pause.fill" : "play.fill")
+                                .font(.system(size: 14, weight: .bold))
+                                .foregroundStyle(.black)
+                                .offset(x: music.isPlaying ? 0 : 1)
+                        }
+                    }
+                    .buttonStyle(.plain)
+
+                    Button {
+                        music.nextTrack()
+                    } label: {
+                        Image(systemName: "forward.fill")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(.white.opacity(0.9))
+                            .frame(width: 30, height: 30)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+
+                    Spacer()
+                }
+            }
+            .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private var scrubBar: some View {
+        GeometryReader { geo in
+            let width = max(1, geo.size.width)
+            let barHeight: CGFloat = (music.isHoveringTrack || music.isScrubbing) ? 6 : 4
+
+            ZStack(alignment: .leading) {
+                Capsule(style: .continuous)
+                    .fill(Color.white.opacity(0.16))
+                    .frame(height: barHeight)
+
+                Capsule(style: .continuous)
+                    .fill(music.accentColor)
+                    .frame(width: width * CGFloat(progressFraction), height: barHeight)
+
+                if music.isHoveringTrack || music.isScrubbing {
+                    Circle()
+                        .fill(.white)
+                        .frame(width: 10, height: 10)
+                        .offset(x: max(0, min(width - 10, width * CGFloat(progressFraction) - 5)))
+                }
+            }
+            .frame(height: 14)
+            .contentShape(Rectangle())
+            .onHover { hovering in
+                withAnimation(.easeInOut(duration: 0.14)) {
+                    music.isHoveringTrack = hovering
+                }
+            }
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { value in
+                        guard music.duration > 0 else { return }
+                        music.isScrubbing = true
+                        let ratio = max(0, min(1, value.location.x / width))
+                        music.scrubSeconds = Double(ratio) * music.duration
+                    }
+                    .onEnded { value in
+                        guard music.duration > 0 else {
+                            music.isScrubbing = false
+                            return
+                        }
+                        let ratio = max(0, min(1, value.location.x / width))
+                        let target = Double(ratio) * music.duration
+                        music.isScrubbing = false
+                        music.seek(to: target)
+                    }
+            )
+        }
+        .frame(height: 14)
+    }
+
+    private var emptyStateView: some View {
+        VStack(spacing: 12) {
+            HStack(spacing: 12) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(Color.white.opacity(0.08))
+                    Image(systemName: "music.quarternote.3")
+                        .font(.system(size: 20, weight: .medium))
+                        .foregroundStyle(Color.white.opacity(0.75))
+                }
+                .frame(width: 48, height: 48)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Nenhuma música tocando")
+                        .font(.system(size: 13.5, weight: .semibold))
+                        .foregroundStyle(.white)
+                    Text("Inicie uma faixa no Spotify ou Apple Music para controlar pela ilha.")
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(Color.white.opacity(0.58))
+                        .lineLimit(2)
+                }
+
+                Spacer()
+            }
+
+            HStack(spacing: 10) {
+                if music.isAppInstalled("com.spotify.client") {
+                    launchPlayerButton(title: "Abrir Spotify", icon: "play.circle.fill", tint: MusicPlayerKind.spotify.defaultAccentColor) {
+                        music.openPlayer(.spotify)
+                    }
+                }
+
+                if music.isAppInstalled("com.apple.Music") {
+                    launchPlayerButton(title: "Abrir Música", icon: "music.note", tint: MusicPlayerKind.appleMusic.defaultAccentColor) {
+                        music.openPlayer(.appleMusic)
+                    }
+                }
+
+                Spacer()
+
+                Button {
+                    Task { await music.pollNow() }
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(Color.white.opacity(0.78))
+                        .frame(width: 28, height: 28)
+                        .background(Color.white.opacity(0.10), in: Circle())
+                }
+                .buttonStyle(.plain)
+                .help("Atualizar player")
+            }
+        }
+    }
+
+    private var automationNoticeView: some View {
+        HStack(spacing: 12) {
+            ZStack {
+                Circle()
+                    .fill(Color.orange.opacity(0.18))
+                    .frame(width: 44, height: 44)
+                Image(systemName: "lock.shield.fill")
+                    .font(.system(size: 20))
+                    .foregroundStyle(.orange)
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Permissão de Automação necessária")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.white)
+                Text("Autorize o app em Ajustes do Sistema > Privacidade e Segurança > Automação.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(Color.white.opacity(0.65))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer()
+
+            Button("Ajustes") {
+                if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation") {
+                    NSWorkspace.shared.open(url)
+                }
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
+        }
+    }
+
+    private func launchPlayerButton(title: String, icon: String, tint: Color, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Image(systemName: icon)
+                    .font(.system(size: 11.5, weight: .semibold))
+                Text(title)
+                    .font(.system(size: 11.5, weight: .semibold))
+            }
+            .foregroundStyle(tint)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .background(tint.opacity(0.15), in: Capsule())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var subtitleText: String {
+        if music.album.isEmpty {
+            return music.artist
+        }
+        if music.artist.isEmpty {
+            return music.album
+        }
+        return "\(music.artist) — \(music.album)"
+    }
+
+    private func formatTime(_ seconds: Double) -> String {
+        let total = max(0, Int(seconds.rounded(.down)))
+        let mins = total / 60
+        let secs = total % 60
+        return String(format: "%d:%02d", mins, secs)
+    }
+}
