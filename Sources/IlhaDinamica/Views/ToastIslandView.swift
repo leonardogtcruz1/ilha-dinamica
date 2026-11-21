@@ -5,6 +5,8 @@ struct ToastIslandView: View {
     let event: ToastEvent
     let geometry: NotchGeometry
     @ObservedObject var music: MusicService
+    @ObservedObject var battery: BatteryService
+    @ObservedObject var settings: SettingsStore
 
     var body: some View {
         VStack(spacing: 0) {
@@ -13,24 +15,538 @@ struct ToastIslandView: View {
                     .frame(height: geometry.notchHeight - 2)
             }
 
-            if case .volume(let level, let isMuted) = event.kind {
-                hudBarRow(
-                    icon: isMuted ? "speaker.slash.fill" : (level > 0.5 ? "speaker.wave.3.fill" : "speaker.wave.1.fill"),
-                    title: isMuted ? "Sem som" : "Volume",
-                    value: isMuted ? 0 : level,
-                    tint: isMuted ? .red : Color(red: 0.28, green: 0.88, blue: 0.54)
+            if case .volume(let level, let isMuted, let deviceName, let deviceIcon) = event.kind {
+                volumeHudRow(
+                    level: level,
+                    isMuted: isMuted,
+                    deviceName: deviceName,
+                    deviceIcon: deviceIcon
                 )
             } else if case .brightness(let level) = event.kind {
                 hudBarRow(
                     icon: "sun.max.fill",
                     title: "Brilho",
                     value: level,
-                    tint: Color(red: 1.0, green: 0.78, blue: 0.24)
+                    tint: settings.resolvedSliderColor(fallback: Color(red: 1.0, green: 0.78, blue: 0.24))
+                )
+            } else if case .charging(let percent, let watts) = event.kind {
+                chargingConnectedCard(
+                    fallbackPercent: percent,
+                    fallbackWatts: watts
+                )
+            } else if case .bluetoothConnected(
+                let name,
+                let batteryText,
+                let isAudio,
+                let batteryLeft,
+                let batteryRight,
+                let batteryCase,
+                let batteryMain,
+                let iconName
+            ) = event.kind {
+                headphoneConnectedCard(
+                    name: name,
+                    batteryText: batteryText,
+                    isAudio: isAudio,
+                    batteryLeft: batteryLeft,
+                    batteryRight: batteryRight,
+                    batteryCase: batteryCase,
+                    batteryMain: batteryMain,
+                    iconName: iconName
                 )
             } else {
                 standardBannerRow
             }
         }
+    }
+
+    private func volumeHudRow(
+        level: Float,
+        isMuted: Bool,
+        deviceName: String,
+        deviceIcon: String
+    ) -> some View {
+        let tint: Color = isMuted ? .red : settings.resolvedSliderColor(fallback: Color(red: 0.28, green: 0.88, blue: 0.54))
+        let displayValue: Float = isMuted ? 0 : level
+        let badgeIcon = isMuted ? "speaker.slash.fill" : deviceIcon
+
+        return HStack(spacing: 12) {
+            ZStack {
+                Circle()
+                    .fill(tint.opacity(0.20))
+                    .frame(width: 34, height: 34)
+                Image(systemName: badgeIcon)
+                    .font(.system(size: 14.5, weight: .semibold))
+                    .foregroundStyle(tint)
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 6) {
+                    Text(isMuted ? "Sem som" : "Volume")
+                        .font(.system(size: 11.5, weight: .bold))
+                        .foregroundStyle(.white)
+
+                    HStack(spacing: 4) {
+                        Image(systemName: deviceIcon)
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(tint)
+                        Text(deviceName)
+                            .font(.system(size: 10.5, weight: .semibold))
+                            .foregroundStyle(Color.white.opacity(0.88))
+                            .lineLimit(1)
+                    }
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 2.5)
+                    .background(Color.white.opacity(0.11), in: Capsule())
+
+                    Spacer(minLength: 4)
+
+                    Text(isMuted ? "Mudo" : "\(Int((displayValue * 100).rounded()))%")
+                        .font(.system(size: 11.5, weight: .bold, design: .rounded).monospacedDigit())
+                        .foregroundStyle(tint)
+                }
+
+                GeometryReader { geo in
+                    let w = max(1, geo.size.width)
+                    ZStack(alignment: .leading) {
+                        Capsule(style: .continuous)
+                            .fill(Color.white.opacity(0.16))
+                        Capsule(style: .continuous)
+                            .fill(tint)
+                            .frame(width: w * CGFloat(max(0, min(1, displayValue))))
+                    }
+                }
+                .frame(height: 6)
+            }
+        }
+        .padding(.horizontal, geometry.hasNotch ? 22 : 18)
+        .frame(maxHeight: .infinity)
+    }
+
+    private func chargingConnectedCard(
+        fallbackPercent: Int,
+        fallbackWatts: Int?
+    ) -> some View {
+        let chargeGreen = Color(red: 0.24, green: 0.92, blue: 0.54)
+        let brightGreen = Color(red: 0.36, green: 0.98, blue: 0.62)
+        let deepGreen = Color(red: 0.16, green: 0.84, blue: 0.46)
+        let amberAccent = Color(red: 1.0, green: 0.78, blue: 0.24)
+        let cyanAccent = Color(red: 0.34, green: 0.76, blue: 1.0)
+
+        let effectivePercent = battery.isPluggedIn ? battery.percentage : fallbackPercent
+        let effectiveAdapterWatts = battery.adapterWatts ?? fallbackWatts
+        let isFastCharging = (effectiveAdapterWatts ?? 0) >= 60 || (battery.batteryChargeWatts ?? 0) >= 35
+
+        let statusEyebrow: String = {
+            if battery.isFullyCharged {
+                return "CARGA COMPLETA"
+            }
+            if isFastCharging {
+                return "CARGA RÁPIDA"
+            }
+            if battery.isCharging {
+                return "CARREGANDO MAC"
+            }
+            return "CONECTADO À TOMADA"
+        }()
+
+        let adapterTitle: String = {
+            if let name = battery.adapterName, !name.isEmpty {
+                return name
+            }
+            if let watts = effectiveAdapterWatts {
+                return "Carregador USB-C \(watts)W"
+            }
+            return "Carregador conectado"
+        }()
+
+        let powerValueText: String = {
+            if let sysW = battery.systemPowerInWatts {
+                return String(format: "%.1fW", sysW)
+            }
+            if let chgW = battery.batteryChargeWatts {
+                return String(format: "%.1fW", chgW)
+            }
+            if let watts = effectiveAdapterWatts {
+                return "\(watts)W"
+            }
+            return "Ativo"
+        }()
+
+        let powerDetailText: String = {
+            if let watts = effectiveAdapterWatts, let volts = battery.adapterVoltageVolts {
+                return "Fonte \(watts)W • \(Int(volts.rounded()))V"
+            }
+            if let chgW = battery.batteryChargeWatts {
+                return String(format: "+%.1fW bat.", chgW)
+            }
+            if let watts = effectiveAdapterWatts {
+                return "Fonte \(watts)W"
+            }
+            return "Negociando PD"
+        }()
+
+        let etaValueText: String = {
+            if battery.isFullyCharged || effectivePercent >= 100 {
+                return "100%"
+            }
+            if let mins = battery.timeRemainingMinutes, mins > 0 {
+                if mins >= 60 {
+                    return "\(mins / 60)h \(mins % 60)m"
+                }
+                return "\(mins) min"
+            }
+            return "Calculando..."
+        }()
+
+        let etaDetailText: String = {
+            if battery.isFullyCharged || effectivePercent >= 100 {
+                return "Carga cheia"
+            }
+            if !battery.isCharging && battery.isPluggedIn {
+                return "Pausado / Otimizada"
+            }
+            return "Tempo estimado"
+        }()
+
+        let batteryValueText: String = {
+            if let health = battery.healthPercent {
+                return "\(health)% saúde"
+            }
+            if let temp = battery.temperatureCelsius {
+                return String(format: "%.1f°C", temp)
+            }
+            return "Normal"
+        }()
+
+        let batteryDetailText: String = {
+            if let temp = battery.temperatureCelsius, let cycles = battery.cycleCount {
+                return String(format: "%.1f°C • %dc", temp, cycles)
+            }
+            if let temp = battery.temperatureCelsius {
+                return String(format: "%.1f°C", temp)
+            }
+            if let cycles = battery.cycleCount {
+                return "\(cycles) ciclos"
+            }
+            return "Temperatura OK"
+        }()
+
+        return VStack(spacing: 8) {
+            HStack(spacing: 12) {
+                TimelineView(.animation(minimumInterval: 0.08)) { timeline in
+                    let t = timeline.date.timeIntervalSinceReferenceDate
+                    let wave = (sin(t * 3.8) + 1.0) * 0.5
+                    let glowScale = 0.96 + 0.08 * wave
+                    let innerOpacity = 0.24 + 0.16 * wave
+
+                    ZStack {
+                        Circle()
+                            .fill(
+                                RadialGradient(
+                                    colors: [
+                                        chargeGreen.opacity(innerOpacity),
+                                        chargeGreen.opacity(0.06)
+                                    ],
+                                    center: .center,
+                                    startRadius: 2,
+                                    endRadius: 24
+                                )
+                            )
+                            .frame(width: 42, height: 42)
+                            .scaleEffect(glowScale)
+                            .overlay(
+                                Circle()
+                                    .stroke(chargeGreen.opacity(0.48), lineWidth: 0.9)
+                            )
+
+                        Image(systemName: "bolt.fill")
+                            .font(.system(size: 18, weight: .bold))
+                            .foregroundStyle(chargeGreen)
+                    }
+                }
+
+                VStack(alignment: .leading, spacing: 2.5) {
+                    HStack(spacing: 5) {
+                        Circle()
+                            .fill(chargeGreen)
+                            .frame(width: 6, height: 6)
+                        Text(statusEyebrow)
+                            .font(.system(size: 9, weight: .bold))
+                            .tracking(0.5)
+                            .foregroundStyle(chargeGreen)
+                            .lineLimit(1)
+                    }
+
+                    Text(adapterTitle)
+                        .font(.system(size: 13.5, weight: .bold))
+                        .foregroundStyle(.white)
+                        .lineLimit(1)
+                }
+
+                Spacer(minLength: 6)
+
+                Text("\(effectivePercent)%")
+                    .font(.system(size: 21, weight: .bold, design: .rounded).monospacedDigit())
+                    .foregroundStyle(Color(red: 0.26, green: 0.94, blue: 0.56))
+            }
+
+            GeometryReader { geo in
+                let w = max(1, geo.size.width)
+                let fraction = max(0.03, min(1.0, Double(effectivePercent) / 100.0))
+                ZStack(alignment: .leading) {
+                    Capsule(style: .continuous)
+                        .fill(Color.white.opacity(0.14))
+                    Capsule(style: .continuous)
+                        .fill(
+                            LinearGradient(
+                                colors: [deepGreen, brightGreen],
+                                startPoint: .leading,
+                                endPoint: .trailing
+                            )
+                        )
+                        .frame(width: w * CGFloat(fraction))
+                }
+            }
+            .frame(height: 6)
+
+            HStack(spacing: 8) {
+                chargingTelemetryTile(
+                    label: "POTÊNCIA",
+                    value: powerValueText,
+                    detail: powerDetailText,
+                    tint: chargeGreen
+                )
+                chargingTelemetryTile(
+                    label: "ATÉ 100%",
+                    value: etaValueText,
+                    detail: etaDetailText,
+                    tint: cyanAccent
+                )
+                chargingTelemetryTile(
+                    label: "BATERIA",
+                    value: batteryValueText,
+                    detail: batteryDetailText,
+                    tint: amberAccent
+                )
+            }
+        }
+        .padding(.horizontal, geometry.hasNotch ? 22 : 18)
+        .padding(.bottom, 10)
+        .frame(maxHeight: .infinity)
+    }
+
+    private func chargingTelemetryTile(
+        label: String,
+        value: String,
+        detail: String,
+        tint: Color
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(label)
+                .font(.system(size: 8.5, weight: .bold))
+                .tracking(0.35)
+                .foregroundStyle(Color.white.opacity(0.50))
+                .lineLimit(1)
+
+            Text(value)
+                .font(.system(size: 12.5, weight: .bold, design: .rounded).monospacedDigit())
+                .foregroundStyle(tint)
+                .lineLimit(1)
+
+            Text(detail)
+                .font(.system(size: 9.5, weight: .medium))
+                .foregroundStyle(Color.white.opacity(0.68))
+                .lineLimit(1)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 9)
+        .padding(.vertical, 6)
+        .background(Color.white.opacity(0.075), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    private func headphoneConnectedCard(
+        name: String,
+        batteryText: String?,
+        isAudio: Bool,
+        batteryLeft: String?,
+        batteryRight: String?,
+        batteryCase: String?,
+        batteryMain: String?,
+        iconName: String
+    ) -> some View {
+        let btAccent = Color(red: 0.34, green: 0.72, blue: 1.0)
+        let greenAccent = Color(red: 0.24, green: 0.90, blue: 0.54)
+        let hasSplitBatteries = batteryLeft != nil || batteryRight != nil || batteryCase != nil
+
+        return VStack(spacing: 10) {
+            HStack(spacing: 12) {
+                ZStack {
+                    Circle()
+                        .fill(
+                            RadialGradient(
+                                colors: [btAccent.opacity(0.32), btAccent.opacity(0.08)],
+                                center: .center,
+                                startRadius: 2,
+                                endRadius: 24
+                            )
+                        )
+                        .frame(width: 42, height: 42)
+                        .overlay(
+                            Circle()
+                                .stroke(btAccent.opacity(0.45), lineWidth: 0.9)
+                        )
+
+                    Image(systemName: iconName)
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .symbolRenderingMode(.hierarchical)
+                }
+
+                VStack(alignment: .leading, spacing: 2.5) {
+                    HStack(spacing: 5) {
+                        Circle()
+                            .fill(greenAccent)
+                            .frame(width: 6, height: 6)
+                        Text(isAudio ? "SAÍDA DE ÁUDIO CONECTADA" : "BLUETOOTH CONECTADO")
+                            .font(.system(size: 9, weight: .bold))
+                            .tracking(0.5)
+                            .foregroundStyle(greenAccent)
+                    }
+
+                    Text(name)
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(.white)
+                        .lineLimit(1)
+                }
+
+                Spacer(minLength: 6)
+
+                HStack(spacing: 6) {
+                    if isAudio {
+                        AudioVisualizerView(
+                            isPlaying: true,
+                            accentColor: btAccent,
+                            barCount: 3,
+                            barWidth: 2.2,
+                            maxHeight: 13,
+                            spacing: 2
+                        )
+                    }
+
+                    Text("Ativo")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(greenAccent)
+                }
+                .padding(.horizontal, 9)
+                .padding(.vertical, 5)
+                .background(greenAccent.opacity(0.14), in: Capsule())
+            }
+
+            if hasSplitBatteries {
+                HStack(spacing: 8) {
+                    batteryTile(label: "FONE ESQ.", valueText: batteryLeft)
+                    batteryTile(label: "FONE DIR.", valueText: batteryRight)
+                    batteryTile(label: "ESTOJO", valueText: batteryCase)
+                }
+            } else if let batteryMain {
+                HStack(spacing: 8) {
+                    batteryTile(label: "BATERIA", valueText: batteryMain)
+
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("ROTA DE ÁUDIO")
+                            .font(.system(size: 8.5, weight: .bold))
+                            .tracking(0.4)
+                            .foregroundStyle(Color.white.opacity(0.48))
+                        HStack(spacing: 5) {
+                            Image(systemName: iconName)
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(btAccent)
+                            Text("Selecionado como principal")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(.white)
+                                .lineLimit(1)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 7)
+                    .background(Color.white.opacity(0.075), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                }
+            } else {
+                HStack(spacing: 8) {
+                    Image(systemName: iconName)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(btAccent)
+
+                    Text(batteryText ?? (isAudio ? "Áudio roteado para este dispositivo" : "Conectado e pronto para uso"))
+                        .font(.system(size: 11.5, weight: .semibold))
+                        .foregroundStyle(Color.white.opacity(0.86))
+                        .lineLimit(1)
+
+                    Spacer()
+
+                    Text("Conectado")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(btAccent)
+                }
+                .padding(.horizontal, 11)
+                .padding(.vertical, 9)
+                .background(Color.white.opacity(0.075), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+            }
+        }
+        .padding(.horizontal, geometry.hasNotch ? 22 : 18)
+        .padding(.bottom, 12)
+        .frame(maxHeight: .infinity)
+    }
+
+    private func batteryTile(label: String, valueText: String?) -> some View {
+        let fraction = Self.parsePercentFraction(valueText)
+        let tint: Color = {
+            guard let fraction else { return Color.white.opacity(0.42) }
+            if fraction <= 0.18 { return Color(red: 1.0, green: 0.42, blue: 0.22) }
+            if fraction <= 0.35 { return Color(red: 1.0, green: 0.78, blue: 0.24) }
+            return Color(red: 0.24, green: 0.90, blue: 0.54)
+        }()
+
+        return VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(label)
+                    .font(.system(size: 8.5, weight: .bold))
+                    .tracking(0.35)
+                    .foregroundStyle(Color.white.opacity(0.50))
+                    .lineLimit(1)
+                Spacer(minLength: 2)
+                Text(valueText ?? "—")
+                    .font(.system(size: 11, weight: .bold, design: .rounded).monospacedDigit())
+                    .foregroundStyle(valueText == nil ? Color.white.opacity(0.45) : .white)
+            }
+
+            GeometryReader { geo in
+                let w = max(1, geo.size.width)
+                ZStack(alignment: .leading) {
+                    Capsule(style: .continuous)
+                        .fill(Color.white.opacity(0.14))
+                    if let fraction {
+                        Capsule(style: .continuous)
+                            .fill(tint)
+                            .frame(width: w * CGFloat(max(0.06, min(1.0, fraction))))
+                    }
+                }
+            }
+            .frame(height: 4.5)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 9)
+        .padding(.vertical, 7)
+        .background(Color.white.opacity(0.075), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    private static func parsePercentFraction(_ raw: String?) -> Double? {
+        guard let raw else { return nil }
+        let digits = raw.filter(\.isNumber)
+        guard let num = Double(digits) else { return nil }
+        return max(0, min(1, num / 100.0))
     }
 
     private var standardBannerRow: some View {
@@ -108,7 +624,7 @@ struct ToastIslandView: View {
             return completed.accentColor
         case .trackChanged(_, _, let accent):
             return accent
-        case .volume(_, let isMuted):
+        case .volume(_, let isMuted, _, _):
             return isMuted ? .red : Color(red: 0.28, green: 0.88, blue: 0.54)
         case .brightness:
             return Color(red: 1.0, green: 0.78, blue: 0.24)
@@ -141,14 +657,14 @@ struct ToastIslandView: View {
             return completed.iconName
         case .trackChanged:
             return "music.note"
-        case .volume(_, let isMuted):
-            return isMuted ? "speaker.slash.fill" : "speaker.wave.2.fill"
+        case .volume(_, let isMuted, _, let deviceIcon):
+            return isMuted ? "speaker.slash.fill" : deviceIcon
         case .brightness:
             return "sun.max.fill"
         case .micMuted(let isMuted):
             return isMuted ? "mic.slash.fill" : "mic.fill"
-        case .bluetoothConnected(_, _, let isAudio):
-            return isAudio ? "airpodspro" : "dot.radiowaves.left.and.right"
+        case .bluetoothConnected(_, _, _, _, _, _, _, let icon):
+            return icon
         case .meetingSoon:
             return "video.fill"
         case .shelfAdded:
@@ -174,13 +690,13 @@ struct ToastIslandView: View {
             return "\(completed.title) concluído"
         case .trackChanged(let title, _, _):
             return title
-        case .volume:
-            return "Volume"
+        case .volume(_, _, let deviceName, _):
+            return deviceName
         case .brightness:
             return "Brilho"
         case .micMuted(let isMuted):
             return isMuted ? "Microfone Mutado" : "Microfone Ativado"
-        case .bluetoothConnected(let name, _, _):
+        case .bluetoothConnected(let name, _, _, _, _, _, _, _):
             return name
         case .meetingSoon(let title, _):
             return title
@@ -214,7 +730,7 @@ struct ToastIslandView: View {
             return ""
         case .micMuted(let isMuted):
             return isMuted ? "Captura de áudio silenciada" : "Pronto para falar"
-        case .bluetoothConnected(_, let batteryText, _):
+        case .bluetoothConnected(_, let batteryText, _, _, _, _, _, _):
             return batteryText ?? "Dispositivo Bluetooth conectado"
         case .meetingSoon(_, let minutes):
             return minutes <= 1 ? "Começa agora" : "Começa em \(minutes) minutos"

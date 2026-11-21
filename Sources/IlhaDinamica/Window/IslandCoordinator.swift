@@ -17,6 +17,19 @@ final class IslandCoordinator: ObservableObject {
     @Published var isWeatherOpen: Bool = false {
         didSet { syncPanelKeyFocus() }
     }
+    @Published var isEditingWidgets: Bool = false {
+        didSet { syncPanelKeyFocus() }
+    }
+    @Published var isPresetsOpen: Bool = false {
+        didSet { syncPanelKeyFocus() }
+    }
+    @Published var presetPanelTab: PresetPanelTab = .layouts
+    @Published var isShowingPresetHome: Bool = false {
+        didSet { syncPanelKeyFocus() }
+    }
+    @Published var draggingWidgetTab: IslandTab? = nil
+    @Published var draggingWidgetInitialIndex: Int = 0
+    @Published var draggingWidgetTranslation: CGSize = .zero
 
     let settings: SettingsStore
     let music: MusicService
@@ -31,6 +44,7 @@ final class IslandCoordinator: ObservableObject {
     let system: SystemMonitorService
     let weather: WeatherService
     let recorder: ScreenRecorderService
+    let extraWidgets: ExtraWidgetsService
 
     weak var panel: IslandPanel?
     var onOpenSettings: (() -> Void)?
@@ -47,6 +61,7 @@ final class IslandCoordinator: ObservableObject {
     private var wasInteractingInside = false
     private var isDetachedForDrag = false
     private var suppressHoverExpandUntilExit = false
+    private var lastIdleDragPasteboardChangeCount: Int = NSPasteboard(name: .drag).changeCount
     private weak var previouslyActiveApp: NSRunningApplication?
 
     init(
@@ -62,7 +77,8 @@ final class IslandCoordinator: ObservableObject {
         camera: CameraMirrorService,
         system: SystemMonitorService,
         weather: WeatherService,
-        recorder: ScreenRecorderService
+        recorder: ScreenRecorderService,
+        extraWidgets: ExtraWidgetsService
     ) {
         self.settings = settings
         self.music = music
@@ -77,7 +93,9 @@ final class IslandCoordinator: ObservableObject {
         self.system = system
         self.weather = weather
         self.recorder = recorder
+        self.extraWidgets = extraWidgets
         self.geometry = NotchGeometry.current()
+        self.isShowingPresetHome = settings.layoutPreset.hasHomeDashboard
 
         observeServices()
         syncRestingMode(animated: false)
@@ -105,12 +123,37 @@ final class IslandCoordinator: ObservableObject {
 
         case .compact:
             if geometry.hasNotch {
-                return CGSize(width: geometry.notchWidth + 148, height: geometry.notchHeight)
+                return CGSize(
+                    width: geometry.notchWidth + settings.layoutPreset.compactExtraWidth,
+                    height: geometry.notchHeight
+                )
             } else {
-                return CGSize(width: 224, height: 36)
+                return CGSize(width: 200, height: 33)
             }
 
-        case .toast:
+        case .toast(let event):
+            if case .bluetoothConnected = event.kind {
+                return CGSize(
+                    width: max(geometry.notchWidth + 242, 420),
+                    height: geometry.hasNotch ? 154 : 124
+                )
+            }
+            if case .charging = event.kind {
+                return CGSize(
+                    width: max(geometry.notchWidth + 246, 424),
+                    height: geometry.hasNotch ? 164 : 134
+                )
+            }
+            if case .volume = event.kind {
+                if geometry.hasNotch {
+                    return CGSize(
+                        width: max(geometry.notchWidth + 226, 404),
+                        height: max(geometry.notchHeight + 60, 92)
+                    )
+                } else {
+                    return CGSize(width: 368, height: 72)
+                }
+            }
             if geometry.hasNotch {
                 return CGSize(
                     width: max(geometry.notchWidth + 216, 392),
@@ -121,10 +164,24 @@ final class IslandCoordinator: ObservableObject {
             }
 
         case .expanded:
+            let preset = settings.layoutPreset
             let recordingExtra: CGFloat = recorder.isRecording ? 32 : 0
+            if isEditingWidgets {
+                let editorExtraHeight: CGFloat = recorder.isRecording ? 154 : 174
+                return CGSize(
+                    width: 632,
+                    height: max(geometry.notchHeight + 214, 246) + recordingExtra + editorExtraHeight
+                )
+            }
+            if isPresetsOpen {
+                return CGSize(
+                    width: 616,
+                    height: 384 + recordingExtra
+                )
+            }
             return CGSize(
-                width: 508,
-                height: max(geometry.notchHeight + 214, 246) + recordingExtra
+                width: preset.expandedWidth,
+                height: max(geometry.notchHeight + (preset.expandedBaseHeight - 32), preset.expandedBaseHeight) + recordingExtra
             )
         }
     }
@@ -139,6 +196,10 @@ final class IslandCoordinator: ObservableObject {
 
     var restingMode: IslandMode {
         shouldShowCompact ? .compact : .idle
+    }
+
+    func isPointInsideIsland(_ point: CGPoint = NSEvent.mouseLocation) -> Bool {
+        activeScreenRect().contains(point)
     }
 
     func updateGeometry() {
@@ -158,16 +219,25 @@ final class IslandCoordinator: ObservableObject {
         toastDismissTask = nil
 
         if let tab, settings.enabledTabs.contains(tab) {
+            isShowingPresetHome = false
             activeTab = tab
             if isWeatherOpen {
                 isWeatherOpen = false
+            }
+            if isPresetsOpen {
+                isPresetsOpen = false
             }
             if tab == .shelf && isMirrorOpen {
                 isMirrorOpen = false
                 camera.stop()
             }
-        } else if !settings.enabledTabs.contains(activeTab), let first = settings.enabledTabs.first {
-            activeTab = first
+        } else {
+            if !settings.enabledTabs.contains(activeTab), let first = settings.enabledTabs.first {
+                activeTab = first
+            }
+            if tab == nil {
+                isShowingPresetHome = settings.layoutPreset.hasHomeDashboard
+            }
         }
 
         withAnimation(settings.expandSpring) {
@@ -201,19 +271,59 @@ final class IslandCoordinator: ObservableObject {
         if isWeatherOpen {
             isWeatherOpen = false
         }
+        if isEditingWidgets {
+            isEditingWidgets = false
+        }
+        if isPresetsOpen {
+            isPresetsOpen = false
+        }
+        draggingWidgetTab = nil
+        draggingWidgetInitialIndex = 0
+        draggingWidgetTranslation = .zero
         camera.stop()
 
         withAnimation(settings.collapseSpring) {
             mode = restingMode
         }
         syncPanelKeyFocus()
+        OverlaySpaceManager.shared.resetActiveSpaceMenuBar()
+    }
+
+    func selectTab(_ tab: IslandTab) {
+        withAnimation(settings.sizeSpring) {
+            isShowingPresetHome = false
+            activeTab = tab
+        }
+    }
+
+    func showPresetHome() {
+        guard settings.layoutPreset.hasHomeDashboard else { return }
+        if isMirrorOpen {
+            isMirrorOpen = false
+            camera.stop()
+        }
+        if isWeatherOpen {
+            isWeatherOpen = false
+        }
+        if isEditingWidgets {
+            isEditingWidgets = false
+        }
+        if isPresetsOpen {
+            isPresetsOpen = false
+        }
+        if mode != .expanded {
+            expand()
+        }
+        withAnimation(settings.sizeSpring) {
+            isShowingPresetHome = true
+        }
     }
 
     func toggleExpanded() {
         if mode == .expanded {
             collapse()
         } else {
-            expand(tab: smartDefaultTab())
+            expand(tab: settings.layoutPreset.hasHomeDashboard ? nil : smartDefaultTab())
         }
     }
 
@@ -232,8 +342,14 @@ final class IslandCoordinator: ObservableObject {
             if isWeatherOpen {
                 isWeatherOpen = false
             }
+            if isEditingWidgets {
+                isEditingWidgets = false
+            }
+            if isPresetsOpen {
+                isPresetsOpen = false
+            }
             if mode != .expanded {
-                expand(tab: activeTab)
+                expand()
             }
             isMirrorOpen = true
             camera.start()
@@ -255,16 +371,122 @@ final class IslandCoordinator: ObservableObject {
             isMirrorOpen = false
             camera.stop()
         }
+        if isEditingWidgets {
+            isEditingWidgets = false
+        }
+        if isPresetsOpen {
+            isPresetsOpen = false
+        }
         if mode != .expanded {
-            expand(tab: activeTab)
+            expand()
         }
         withAnimation(settings.sizeSpring) {
             isWeatherOpen = true
         }
     }
 
+    func toggleWidgetEditor() {
+        draggingWidgetTab = nil
+        draggingWidgetInitialIndex = 0
+        draggingWidgetTranslation = .zero
+        if isEditingWidgets {
+            withAnimation(settings.sizeSpring) {
+                isEditingWidgets = false
+            }
+        } else {
+            if isMirrorOpen {
+                isMirrorOpen = false
+                camera.stop()
+            }
+            if isWeatherOpen {
+                isWeatherOpen = false
+            }
+            if isPresetsOpen {
+                isPresetsOpen = false
+            }
+            if mode != .expanded {
+                expand()
+            }
+            withAnimation(settings.sizeSpring) {
+                isEditingWidgets = true
+            }
+        }
+    }
+
+    func togglePresets() {
+        draggingWidgetTab = nil
+        draggingWidgetInitialIndex = 0
+        draggingWidgetTranslation = .zero
+        if isPresetsOpen {
+            withAnimation(settings.sizeSpring) {
+                isPresetsOpen = false
+            }
+        } else {
+            if isMirrorOpen {
+                isMirrorOpen = false
+                camera.stop()
+            }
+            if isWeatherOpen {
+                isWeatherOpen = false
+            }
+            if isEditingWidgets {
+                isEditingWidgets = false
+            }
+            if mode != .expanded {
+                expand()
+            }
+            withAnimation(settings.sizeSpring) {
+                isPresetsOpen = true
+            }
+        }
+    }
+
+    func updateWidgetDrag(tab: IslandTab, translation: CGSize, slotStride: CGFloat) {
+        let active = settings.enabledTabs
+        guard let currentIndex = active.firstIndex(of: tab) else { return }
+
+        if draggingWidgetTab != tab {
+            draggingWidgetTab = tab
+            draggingWidgetInitialIndex = currentIndex
+        }
+        draggingWidgetTranslation = translation
+
+        let projectedSlot = (CGFloat(draggingWidgetInitialIndex) * slotStride + translation.width) / slotStride
+        let targetIndex = max(0, min(active.count - 1, Int(projectedSlot.rounded())))
+        if targetIndex != currentIndex {
+            withAnimation(settings.sizeSpring) {
+                settings.moveEnabledTab(tab, toEnabledIndex: targetIndex)
+            }
+        }
+    }
+
+    func endWidgetDrag() {
+        guard draggingWidgetTab != nil else { return }
+        withAnimation(settings.sizeSpring) {
+            draggingWidgetTab = nil
+            draggingWidgetInitialIndex = 0
+            draggingWidgetTranslation = .zero
+        }
+    }
+
+    func dragOffset(for tab: IslandTab, slotStride: CGFloat) -> CGSize {
+        guard draggingWidgetTab == tab,
+              let currentIndex = settings.enabledTabs.firstIndex(of: tab) else {
+            return .zero
+        }
+        let dx = draggingWidgetTranslation.width - CGFloat(currentIndex - draggingWidgetInitialIndex) * slotStride
+        let dy = max(-10, min(10, draggingWidgetTranslation.height * 0.25))
+        return CGSize(width: dx, height: dy)
+    }
+
     func focusPanelForTyping() {
-        guard mode == .expanded, activeTab == .notes, !isMirrorOpen, !isWeatherOpen else { return }
+        guard mode == .expanded,
+              activeTab.requiresKeyboardFocus,
+              !isShowingPresetHome,
+              !isMirrorOpen,
+              !isWeatherOpen,
+              !isEditingWidgets,
+              !isPresetsOpen else { return }
         if let front = NSWorkspace.shared.frontmostApplication,
            front.bundleIdentifier != Bundle.main.bundleIdentifier {
             previouslyActiveApp = front
@@ -304,7 +526,7 @@ final class IslandCoordinator: ObservableObject {
     }
 
     private func syncPanelKeyFocus() {
-        let needsKey = (mode == .expanded && activeTab == .notes && !isMirrorOpen && !isWeatherOpen)
+        let needsKey = (mode == .expanded && activeTab.requiresKeyboardFocus && !isShowingPresetHome && !isMirrorOpen && !isWeatherOpen && !isEditingWidgets && !isPresetsOpen)
         panel?.allowsKeyFocus = needsKey
         if !needsKey {
             if panel?.isKeyWindow == true {
@@ -379,6 +601,40 @@ final class IslandCoordinator: ObservableObject {
             self.syncRestingMode(animated: true)
         }
         .store(in: &cancellables)
+
+        settings.$tabOrder
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                guard let self else { return }
+                if !self.settings.enabledTabs.contains(self.activeTab),
+                   let fallback = self.settings.enabledTabs.first {
+                    self.activeTab = fallback
+                }
+            }
+            .store(in: &cancellables)
+
+        settings.$enabledExtraTabs
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                guard let self else { return }
+                if !self.settings.enabledTabs.contains(self.activeTab),
+                   let fallback = self.settings.enabledTabs.first {
+                    self.activeTab = fallback
+                }
+                self.syncRestingMode(animated: true)
+            }
+            .store(in: &cancellables)
+
+        settings.$layoutPreset
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                guard let self else { return }
+                withAnimation(self.settings.sizeSpring) {
+                    self.isShowingPresetHome = self.settings.layoutPreset.hasHomeDashboard
+                    self.objectWillChange.send()
+                }
+            }
+            .store(in: &cancellables)
     }
 
     private func syncRestingMode(animated: Bool) {
@@ -433,25 +689,26 @@ final class IslandCoordinator: ObservableObject {
         let mouse = NSEvent.mouseLocation
         let hitRect = activeScreenRect()
         let isInside = hitRect.contains(mouse)
+        if isInside && mouse.y >= geometry.screenFrame.maxY - 38 {
+            OverlaySpaceManager.shared.interruptMenuBarReveal()
+        }
         let mousePressed = NSEvent.pressedMouseButtons != 0
         let startedOutside = !wasInteractingInside
 
-        let dragTriggerRect = dragNotchTriggerRect()
-
         if !mousePressed {
+            lastIdleDragPasteboardChangeCount = NSPasteboard(name: .drag).changeCount
             if isDetachedForDrag {
                 scheduleReattachAfterDrag()
             }
             wasInteractingInside = false
         }
 
-        let isExternalDragSession = mousePressed
+        let hasActiveExternalFileDrag = mousePressed
             && startedOutside
             && settings.enableShelfModule
-            && (mouse.y >= geometry.screenFrame.maxY - 180 || isDetachedForDrag)
-            && Self.dragPasteboardHasDropPayload()
+            && Self.dragPasteboardHasDropPayload(sinceIdleChangeCount: lastIdleDragPasteboardChangeCount)
 
-        if isExternalDragSession {
+        if hasActiveExternalFileDrag && isInside {
             reattachTask?.cancel()
             reattachTask = nil
             if !isDetachedForDrag {
@@ -459,15 +716,13 @@ final class IslandCoordinator: ObservableObject {
                 panel.orderFrontRegardless()
                 isDetachedForDrag = true
             }
-            if dragTriggerRect.contains(mouse) {
-                hoverCollapseTask?.cancel()
-                hoverCollapseTask = nil
-                wasMouseInside = true
-                if mode != .expanded || activeTab != .shelf {
-                    expand(tab: .shelf)
-                }
+            hoverCollapseTask?.cancel()
+            hoverCollapseTask = nil
+            wasMouseInside = true
+            if mode != .expanded || activeTab != .shelf {
+                expand(tab: .shelf)
             }
-        } else if isInside && !isDetachedForDrag {
+        } else if isInside && !isDetachedForDrag && !hasActiveExternalFileDrag {
             wasInteractingInside = true
         }
 
@@ -477,23 +732,24 @@ final class IslandCoordinator: ObservableObject {
         } else {
             interactiveMode = true
         }
-        let shouldAcceptMouse = (isInside && interactiveMode)
-            || (isExternalDragSession && dragTriggerRect.contains(mouse))
+        let shouldAcceptMouse = (isInside && (interactiveMode || hasActiveExternalFileDrag))
             || (wasInteractingInside && mousePressed)
         if panel.ignoresMouseEvents == shouldAcceptMouse {
             panel.ignoresMouseEvents = !shouldAcceptMouse
         }
 
-        let isInteractingWithControls = mousePressed
+        let isInteractingWithControls = (wasInteractingInside && mousePressed)
             || audio.isDraggingVolume
             || audio.isDraggingBrightness
             || music.isScrubbing
-            || isExternalDragSession
+            || draggingWidgetTab != nil
+            || extraWidgets.isInteracting
+            || (hasActiveExternalFileDrag && isInside)
 
         let wasInsideBefore = wasMouseInside
-        let isNotesTextActive = (mode == .expanded && activeTab == .notes && !isMirrorOpen && !isWeatherOpen)
-        let isSliderDragging = audio.isDraggingVolume || audio.isDraggingBrightness || music.isScrubbing
-        if isSliderDragging || (isInside && !wasInsideBefore && interactiveMode && !isNotesTextActive) {
+        let isKeyboardTabActive = (mode == .expanded && activeTab.requiresKeyboardFocus && !isShowingPresetHome && !isMirrorOpen && !isWeatherOpen && !isEditingWidgets && !isPresetsOpen)
+        let isSliderDragging = audio.isDraggingVolume || audio.isDraggingBrightness || music.isScrubbing || draggingWidgetTab != nil
+        if isSliderDragging || (isInside && !wasInsideBefore && interactiveMode && !isKeyboardTabActive) {
             NSCursor.arrow.set()
         }
 
@@ -504,14 +760,18 @@ final class IslandCoordinator: ObservableObject {
 
             if mode != .expanded
                 && settings.openOnHover
+                && !mousePressed
                 && !suppressHoverExpandUntilExit {
                 if settings.effectiveHoverDelayMs <= 0 {
-                    expand(tab: smartDefaultTab())
+                    expand(tab: settings.layoutPreset.hasHomeDashboard ? nil : smartDefaultTab())
                 } else if hoverExpandTask == nil {
                     scheduleHoverExpand()
                 }
             }
         } else {
+            if wasInsideBefore {
+                OverlaySpaceManager.shared.resetActiveSpaceMenuBar()
+            }
             wasMouseInside = false
             suppressHoverExpandUntilExit = false
             hoverExpandTask?.cancel()
@@ -541,16 +801,9 @@ final class IslandCoordinator: ObservableObject {
         }
     }
 
-    private func dragNotchTriggerRect() -> CGRect {
-        let width: CGFloat = 440
-        let height: CGFloat = max(geometry.notchHeight + 64, 96)
-        let originX = geometry.notchCenterX - width / 2.0
-        let originY = geometry.screenFrame.maxY - height
-        return CGRect(x: originX, y: originY, width: width, height: height)
-    }
-
-    private static func dragPasteboardHasDropPayload() -> Bool {
+    private static func dragPasteboardHasDropPayload(sinceIdleChangeCount idleCount: Int) -> Bool {
         let pb = NSPasteboard(name: .drag)
+        guard pb.changeCount != idleCount else { return false }
         guard let types = pb.types, !types.isEmpty else { return false }
 
         let knownTypes: Set<String> = [
@@ -581,11 +834,12 @@ final class IslandCoordinator: ObservableObject {
             guard !Task.isCancelled, let self else { return }
             self.hoverExpandTask = nil
             guard self.wasMouseInside,
+                  NSEvent.pressedMouseButtons == 0,
                   !self.suppressHoverExpandUntilExit,
                   self.mode != .expanded else {
                 return
             }
-            self.expand(tab: self.smartDefaultTab())
+            self.expand(tab: self.settings.layoutPreset.hasHomeDashboard ? nil : self.smartDefaultTab())
         }
     }
 
@@ -626,19 +880,13 @@ final class IslandCoordinator: ObservableObject {
                 width: base.width + 4,
                 height: base.height + 8
             )
-        case .idle, .compact:
-            if geometry.hasNotch {
-                return CGRect(
-                    x: base.minX - 6,
-                    y: base.minY,
-                    width: base.width + 12,
-                    height: base.height + 8
-                )
-            } else {
-                return base.insetBy(dx: -4, dy: -4)
-            }
-        case .toast:
-            return base.insetBy(dx: -4, dy: -4)
+        case .idle, .compact, .toast:
+            return CGRect(
+                x: base.minX,
+                y: base.minY,
+                width: base.width,
+                height: base.height + geometry.topInset + 2
+            )
         }
     }
 }

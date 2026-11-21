@@ -16,6 +16,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     let system: SystemMonitorService
     let weather: WeatherService
     let recorder: ScreenRecorderService
+    let extraWidgets: ExtraWidgetsService
     let mediaKeys: MediaKeyInterceptor
     let coordinator: IslandCoordinator
 
@@ -38,6 +39,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         let system = SystemMonitorService()
         let weather = WeatherService(settings: settings)
         let recorder = ScreenRecorderService(settings: settings, audio: audio)
+        let extraWidgets = ExtraWidgetsService(systemMonitor: system)
         let mediaKeys = MediaKeyInterceptor(settings: settings, audio: audio)
 
         let coordinator = IslandCoordinator(
@@ -53,7 +55,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             camera: camera,
             system: system,
             weather: weather,
-            recorder: recorder
+            recorder: recorder,
+            extraWidgets: extraWidgets
         )
 
         self.settings = settings
@@ -69,6 +72,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         self.system = system
         self.weather = weather
         self.recorder = recorder
+        self.extraWidgets = extraWidgets
         self.mediaKeys = mediaKeys
         self.coordinator = coordinator
 
@@ -95,6 +99,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             activityToken = nil
         }
         mediaKeys.disable()
+        extraWidgets.stopScreenClean()
+        extraWidgets.disableCaffeine()
+        extraWidgets.stopAmbientSound()
         if recorder.isRecording {
             recorder.stopRecording()
         }
@@ -137,7 +144,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             guard let self, self.settings.enableBatteryModule, self.settings.showBatteryToasts else {
                 return
             }
-            self.coordinator.showToast(event, duration: 3.4)
+            let duration: TimeInterval
+            if case .charging = event.kind {
+                duration = 5.2
+            } else {
+                duration = 3.4
+            }
+            self.coordinator.showToast(event, duration: duration)
         }
 
         music.onTrackChanged = { [weak self] title, artist, accent in
@@ -179,8 +192,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         audio.onVolumeChanged = { [weak self] level, isMuted in
             guard let self, self.settings.showHudToasts else { return }
             self.coordinator.showToast(
-                ToastEvent(kind: .volume(level: level, isMuted: isMuted)),
-                duration: 1.5
+                ToastEvent(kind: .volume(
+                    level: level,
+                    isMuted: isMuted,
+                    deviceName: self.audio.defaultOutputName,
+                    deviceIcon: self.audio.defaultOutputIconName
+                )),
+                duration: 1.6
             )
         }
 
@@ -206,9 +224,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
                 ToastEvent(kind: .bluetoothConnected(
                     name: device.name,
                     batteryText: device.batterySummary,
-                    isAudio: device.isAudio
+                    isAudio: device.isAudio,
+                    batteryLeft: device.batteryLeft,
+                    batteryRight: device.batteryRight,
+                    batteryCase: device.batteryCase,
+                    batteryMain: device.batteryMain,
+                    iconName: self.audio.iconForBluetoothDevice(device)
                 )),
-                duration: 3.6
+                duration: 4.2
             )
         }
 
@@ -252,22 +275,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             camera: camera,
             system: system,
             weather: weather,
-            recorder: recorder
+            recorder: recorder,
+            extraWidgets: extraWidgets
         )
         let panel = IslandPanel(rootView: rootView, geometry: coordinator.geometry)
+        panel.isPointInsideIsland = { [weak self] point in
+            self?.coordinator.isPointInsideIsland(point) ?? false
+        }
         panel.onDragEntered = { [weak self] in
-            guard let self, self.settings.enableShelfModule else { return }
-            self.shelf.isDropTargeted = true
+            guard let self, self.settings.enableShelfModule, self.coordinator.isPointInsideIsland() else { return }
+            if !self.shelf.isDropTargeted {
+                self.shelf.isDropTargeted = true
+            }
             if self.coordinator.mode != .expanded || self.coordinator.activeTab != .shelf {
                 self.coordinator.expand(tab: .shelf)
             }
+            self.shelf.isAirDropDropTargeted = self.isCursorInAirDropZone()
         }
         panel.onDragExited = { [weak self] in
             self?.shelf.isDropTargeted = false
+            self?.shelf.isAirDropDropTargeted = false
         }
         panel.onPerformDrop = { [weak self] info in
             guard let self, self.settings.enableShelfModule else { return false }
-            let handled = self.shelf.handleDraggingInfo(info)
+            let toAirDrop = self.isCursorInAirDropZone()
+            self.shelf.isAirDropDropTargeted = false
+            let handled = toAirDrop
+                ? self.shelf.handleExternalDropToAirDrop(info)
+                : self.shelf.handleDraggingInfo(info)
             if handled {
                 self.coordinator.expand(tab: .shelf)
             }
@@ -277,6 +312,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         islandPanel = panel
         panel.orderFrontRegardless()
         OverlaySpaceManager.shared.attach(window: panel)
+    }
+
+    private func isCursorInAirDropZone() -> Bool {
+        let onShelfTab = (coordinator.activeTab == .shelf && !coordinator.isShowingPresetHome)
+        let onCreatorAirDropHome = (coordinator.isShowingPresetHome && settings.layoutPreset == .minimalCompact)
+        guard coordinator.mode == .expanded, (onShelfTab || onCreatorAirDropHome) else {
+            return false
+        }
+        let islandLeft = coordinator.geometry.notchCenterX - coordinator.currentSize.width / 2.0
+        let mouseX = NSEvent.mouseLocation.x
+        let zoneWidth: CGFloat = onCreatorAirDropHome ? (coordinator.currentSize.width * 0.5) : 152
+        return mouseX >= islandLeft && mouseX <= islandLeft + zoneWidth
     }
 
     private func observeScreenChanges() {

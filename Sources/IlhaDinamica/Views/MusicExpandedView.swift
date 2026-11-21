@@ -3,6 +3,7 @@ import SwiftUI
 
 struct MusicExpandedView: View {
     @ObservedObject var music: MusicService
+    @ObservedObject var settings: SettingsStore
 
     private var displayedElapsed: Double {
         music.isScrubbing ? music.scrubSeconds : music.elapsedTime
@@ -23,137 +24,175 @@ struct MusicExpandedView: View {
                 emptyStateView
             }
         }
-        .padding(.top, 12)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var activeTrackView: some View {
-        HStack(spacing: 16) {
-            Button {
-                music.openActivePlayer()
-            } label: {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .fill(music.accentColor.opacity(0.35))
-                        .frame(width: 82, height: 82)
-                        .blur(radius: 14)
+        GeometryReader { geo in
+            let artSize = max(84, min(130, geo.size.height - 14))
+            let corner = max(14, artSize * 0.14)
 
-                    if let artwork = music.artwork {
-                        Image(nsImage: artwork)
-                            .resizable()
-                            .aspectRatio(contentMode: .fill)
-                            .frame(width: 82, height: 82)
-                            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                    .stroke(Color.white.opacity(0.14), lineWidth: 0.75)
+            HStack(spacing: 16) {
+                Button {
+                    music.openActivePlayer()
+                } label: {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: max(16, artSize * 0.16), style: .continuous)
+                            .fill(music.accentColor.opacity(0.35))
+                            .frame(width: artSize, height: artSize)
+                            .blur(radius: 14)
+
+                        if let artwork = music.artwork {
+                            Image(nsImage: artwork)
+                                .resizable()
+                                .aspectRatio(contentMode: .fill)
+                                .frame(width: artSize, height: artSize)
+                                .clipShape(RoundedRectangle(cornerRadius: corner, style: .continuous))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: corner, style: .continuous)
+                                        .stroke(Color.white.opacity(0.14), lineWidth: 0.75)
+                                )
+                        } else {
+                            ZStack {
+                                RoundedRectangle(cornerRadius: corner, style: .continuous)
+                                    .fill(music.accentColor.opacity(0.22))
+                                Image(systemName: "music.note")
+                                    .font(.system(size: max(26, artSize * 0.32), weight: .semibold))
+                                    .foregroundStyle(music.accentColor)
+                            }
+                            .frame(width: artSize, height: artSize)
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
+                .help("Abrir \(music.player.displayName)")
+
+                VStack(alignment: .leading, spacing: 0) {
+                    HStack(alignment: .top, spacing: 8) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(music.title)
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundStyle(.white)
+                                .lineLimit(1)
+
+                            Text(subtitleText)
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundStyle(Color.white.opacity(0.62))
+                                .lineLimit(1)
+                        }
+                        .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+
+                        HStack(spacing: 6) {
+                            let badgeTint = settings.resolvedButtonColor(fallback: music.accentColor)
+                            let barTint = settings.resolvedSliderColor(fallback: music.accentColor)
+                            Text(music.player.displayName)
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(badgeTint)
+                                .padding(.horizontal, 7)
+                                .padding(.vertical, 3)
+                                .background(badgeTint.opacity(0.15), in: Capsule())
+
+                            AudioVisualizerView(
+                                isPlaying: music.isPlaying,
+                                accentColor: barTint,
+                                barCount: 4,
+                                barWidth: 2.3,
+                                maxHeight: 14,
+                                spacing: 2.0
                             )
-                    } else {
-                        ZStack {
-                            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                .fill(music.accentColor.opacity(0.22))
-                            Image(systemName: "music.note")
-                                .font(.system(size: 28, weight: .semibold))
-                                .foregroundStyle(music.accentColor)
                         }
-                        .frame(width: 82, height: 82)
+                        .fixedSize(horizontal: true, vertical: false)
+                        .padding(.trailing, 2)
                     }
-                }
-            }
-            .buttonStyle(.plain)
-            .help("Abrir \(music.player.displayName)")
 
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(alignment: .top, spacing: 8) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(music.title)
-                            .font(.system(size: 14, weight: .semibold))
-                            .foregroundStyle(.white)
-                            .lineLimit(1)
+                    Spacer(minLength: 6)
 
-                        Text(subtitleText)
-                            .font(.system(size: 11.5, weight: .medium))
-                            .foregroundStyle(Color.white.opacity(0.62))
-                            .lineLimit(1)
-                    }
-                    .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+                    VStack(spacing: 4) {
+                        scrubBar
 
-                    HStack(spacing: 6) {
-                        Text(music.player.displayName)
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(music.accentColor)
-                            .padding(.horizontal, 7)
-                            .padding(.vertical, 3)
-                            .background(music.accentColor.opacity(0.15), in: Capsule())
-
-                        AudioVisualizerView(
-                            isPlaying: music.isPlaying,
-                            accentColor: music.accentColor,
-                            barCount: 4,
-                            barWidth: 2.3,
-                            maxHeight: 14,
-                            spacing: 2.0
-                        )
-                    }
-                    .fixedSize(horizontal: true, vertical: false)
-                    .padding(.trailing, 2)
-                }
-
-                VStack(spacing: 5) {
-                    scrubBar
-
-                    HStack {
-                        Text(formatTime(displayedElapsed))
-                        Spacer()
-                        Text(formatTime(music.duration))
-                    }
-                    .font(.system(size: 10, weight: .medium, design: .rounded).monospacedDigit())
-                    .foregroundStyle(Color.white.opacity(0.48))
-                }
-
-                HStack(spacing: 22) {
-                    Spacer()
-
-                    Button {
-                        music.previousTrack()
-                    } label: {
-                        Image(systemName: "backward.fill")
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundStyle(.white.opacity(0.9))
-                            .frame(width: 30, height: 30)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-
-                    Button {
-                        music.togglePlayPause()
-                    } label: {
-                        ZStack {
-                            Circle()
-                                .fill(Color.white)
-                                .frame(width: 34, height: 34)
-                            Image(systemName: music.isPlaying ? "pause.fill" : "play.fill")
-                                .font(.system(size: 14, weight: .bold))
-                                .foregroundStyle(.black)
-                                .offset(x: music.isPlaying ? 0 : 1)
+                        HStack {
+                            Text(formatTime(displayedElapsed))
+                            Spacer()
+                            Text(formatTime(music.duration))
                         }
+                        .font(.system(size: 10, weight: .medium, design: .rounded).monospacedDigit())
+                        .foregroundStyle(Color.white.opacity(0.48))
                     }
-                    .buttonStyle(.plain)
 
-                    Button {
-                        music.nextTrack()
-                    } label: {
-                        Image(systemName: "forward.fill")
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundStyle(.white.opacity(0.9))
-                            .frame(width: 30, height: 30)
-                            .contentShape(Rectangle())
+                    Spacer(minLength: 6)
+
+                    HStack(spacing: 16) {
+                        Spacer(minLength: 0)
+
+                        Button {
+                            music.seek(to: max(0, displayedElapsed - 10))
+                        } label: {
+                            Image(systemName: "gobackward.10")
+                                .font(.system(size: 14, weight: .medium))
+                                .foregroundStyle(.white.opacity(0.75))
+                                .frame(width: 28, height: 28)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+
+                        Button {
+                            music.previousTrack()
+                        } label: {
+                            Image(systemName: "backward.fill")
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundStyle(.white.opacity(0.9))
+                                .frame(width: 30, height: 30)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+
+                        Button {
+                            music.togglePlayPause()
+                        } label: {
+                            ZStack {
+                                Circle()
+                                    .fill(settings.resolvedButtonColor(fallback: .white))
+                                    .frame(width: 38, height: 38)
+                                Image(systemName: music.isPlaying ? "pause.fill" : "play.fill")
+                                    .font(.system(size: 15, weight: .bold))
+                                    .foregroundStyle(settings.resolvedButtonForeground(fallback: .black))
+                                    .offset(x: music.isPlaying ? 0 : 1)
+                            }
+                        }
+                        .buttonStyle(.plain)
+
+                        Button {
+                            music.nextTrack()
+                        } label: {
+                            Image(systemName: "forward.fill")
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundStyle(.white.opacity(0.9))
+                                .frame(width: 30, height: 30)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+
+                        Button {
+                            let target = music.duration > 0
+                                ? min(music.duration, displayedElapsed + 10)
+                                : displayedElapsed + 10
+                            music.seek(to: target)
+                        } label: {
+                            Image(systemName: "goforward.10")
+                                .font(.system(size: 14, weight: .medium))
+                                .foregroundStyle(.white.opacity(0.75))
+                                .frame(width: 28, height: 28)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+
+                        Spacer(minLength: 0)
                     }
-                    .buttonStyle(.plain)
-
-                    Spacer()
                 }
+                .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+                .frame(height: artSize)
             }
-            .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+            .frame(width: geo.size.width, height: geo.size.height, alignment: .center)
         }
     }
 
@@ -168,7 +207,7 @@ struct MusicExpandedView: View {
                     .frame(height: barHeight)
 
                 Capsule(style: .continuous)
-                    .fill(music.accentColor)
+                    .fill(settings.resolvedSliderColor(fallback: music.accentColor))
                     .frame(width: width * CGFloat(progressFraction), height: barHeight)
 
                 if music.isHoveringTrack || music.isScrubbing {
@@ -261,6 +300,7 @@ struct MusicExpandedView: View {
                 .help("Atualizar player")
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
     }
 
     private var automationNoticeView: some View {
@@ -294,6 +334,7 @@ struct MusicExpandedView: View {
             .buttonStyle(.borderedProminent)
             .controlSize(.small)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
     }
 
     private func launchPlayerButton(title: String, icon: String, tint: Color, action: @escaping () -> Void) -> some View {

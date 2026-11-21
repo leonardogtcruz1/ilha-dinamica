@@ -2,9 +2,10 @@ import AppKit
 import SwiftUI
 
 final class IslandPanel: NSPanel {
-    static let canvasSize = CGSize(width: 580, height: 332)
+    static let canvasSize = CGSize(width: 660, height: 450)
 
     var allowsKeyFocus: Bool = false
+    var isPointInsideIsland: ((CGPoint) -> Bool)?
     var onDragEntered: (() -> Void)?
     var onDragExited: (() -> Void)?
     var onPerformDrop: ((NSDraggingInfo) -> Bool)?
@@ -18,18 +19,16 @@ final class IslandPanel: NSPanel {
             defer: false
         )
 
-        isFloatingPanel = true
+        isFloatingPanel = false
         becomesKeyOnlyIfNeeded = true
         canHide = false
         isOpaque = false
         backgroundColor = .clear
         hasShadow = false
-        level = .statusBar
+        level = NSWindow.Level(rawValue: 2006)
         collectionBehavior = [
-            .canJoinAllSpaces,
             .stationary,
-            .ignoresCycle,
-            .fullScreenAuxiliary
+            .ignoresCycle
         ]
         isMovable = false
         isMovableByWindowBackground = false
@@ -39,6 +38,9 @@ final class IslandPanel: NSPanel {
 
         let container = DropContainerView(frame: NSRect(origin: .zero, size: Self.canvasSize))
         container.autoresizingMask = [.width, .height]
+        container.isPointInsideIsland = { [weak self] point in
+            self?.isPointInsideIsland?(point) ?? false
+        }
         container.onDragEntered = { [weak self] in self?.onDragEntered?() }
         container.onDragExited = { [weak self] in self?.onDragExited?() }
         container.onPerformDrop = { [weak self] info in self?.onPerformDrop?(info) ?? false }
@@ -71,6 +73,7 @@ final class IslandPanel: NSPanel {
 }
 
 private final class DropContainerView: NSView {
+    var isPointInsideIsland: ((CGPoint) -> Bool)?
     var onDragEntered: (() -> Void)?
     var onDragExited: (() -> Void)?
     var onPerformDrop: ((NSDraggingInfo) -> Bool)?
@@ -106,7 +109,7 @@ private final class DropContainerView: NSView {
         }
         let area = NSTrackingArea(
             rect: bounds,
-            options: [.mouseEnteredAndExited, .cursorUpdate, .activeAlways, .inVisibleRect],
+            options: [.mouseEnteredAndExited, .cursorUpdate, .activeInActiveApp, .inVisibleRect],
             owner: self,
             userInfo: nil
         )
@@ -127,15 +130,25 @@ private final class DropContainerView: NSView {
         super.mouseEntered(with: event)
     }
 
+    private var isMouseCurrentlyInsideIsland: Bool {
+        isPointInsideIsland?(NSEvent.mouseLocation) ?? false
+    }
+
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
-        guard sender.draggingSource == nil else { return [] }
+        guard sender.draggingSource == nil, isMouseCurrentlyInsideIsland else { return [] }
         onDragEntered?()
         return .copy
     }
 
     override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
         guard sender.draggingSource == nil else { return [] }
-        return .copy
+        if isMouseCurrentlyInsideIsland {
+            onDragEntered?()
+            return .copy
+        } else {
+            onDragExited?()
+            return []
+        }
     }
 
     override func draggingExited(_ sender: NSDraggingInfo?) {
@@ -148,7 +161,7 @@ private final class DropContainerView: NSView {
 
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
         onDragExited?()
-        guard sender.draggingSource == nil else { return false }
+        guard sender.draggingSource == nil, isMouseCurrentlyInsideIsland else { return false }
         return onPerformDrop?(sender) ?? false
     }
 }

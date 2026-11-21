@@ -3,6 +3,7 @@ import SwiftUI
 
 struct AudioExpandedView: View {
     @ObservedObject var audio: AudioControlService
+    @ObservedObject var settings: SettingsStore
 
     private var dynamicVolumeIcon: String {
         if audio.isMuted || audio.volume <= 0.001 {
@@ -22,7 +23,7 @@ struct AudioExpandedView: View {
             HStack(spacing: 12) {
                 controlSliderRow(
                     icon: dynamicVolumeIcon,
-                    iconTint: audio.isMuted ? .red : Color(red: 0.30, green: 0.85, blue: 0.56),
+                    iconTint: audio.isMuted ? .red : settings.resolvedSliderColor(fallback: Color(red: 0.30, green: 0.85, blue: 0.56)),
                     label: "Volume",
                     value: audio.isMuted ? 0 : audio.volume,
                     isDragging: audio.isDraggingVolume,
@@ -38,7 +39,7 @@ struct AudioExpandedView: View {
 
                 controlSliderRow(
                     icon: "sun.max.fill",
-                    iconTint: Color(red: 1.0, green: 0.78, blue: 0.24),
+                    iconTint: settings.resolvedSliderColor(fallback: Color(red: 1.0, green: 0.78, blue: 0.24)),
                     label: "Brilho",
                     value: audio.brightness,
                     isDragging: audio.isDraggingBrightness,
@@ -87,11 +88,17 @@ struct AudioExpandedView: View {
                                         .font(.system(size: 10.5, weight: .semibold))
                                         .lineLimit(1)
                                 }
-                                .foregroundStyle(dev.isDefault ? .black : Color.white.opacity(0.76))
+                                .foregroundStyle(
+                                    dev.isDefault
+                                        ? settings.resolvedButtonForeground(fallback: .black)
+                                        : Color.white.opacity(0.76)
+                                )
                                 .padding(.horizontal, 9)
                                 .padding(.vertical, 6)
                                 .background(
-                                    dev.isDefault ? Color.white : Color.white.opacity(0.08),
+                                    dev.isDefault
+                                        ? settings.resolvedButtonColor(fallback: .white)
+                                        : Color.white.opacity(0.08),
                                     in: Capsule()
                                 )
                             }

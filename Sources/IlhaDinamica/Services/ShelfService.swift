@@ -59,6 +59,8 @@ final class ShelfService: ObservableObject {
     @Published private(set) var pendingDropCount: Int = 0
     @Published private(set) var highlightedItemID: UUID?
     @Published var isDropTargeted: Bool = false
+    @Published var isAirDropDropTargeted: Bool = false
+    @Published private(set) var airDropStatusText: String?
 
     var onFilesAdded: ((Int) -> Void)?
 
@@ -66,6 +68,7 @@ final class ShelfService: ObservableObject {
     private var iconCache: [String: NSImage] = [:]
     private var generatingPaths: Set<String> = []
     private var highlightResetTask: Task<Void, Never>?
+    private var airDropStatusTask: Task<Void, Never>?
     private let promiseQueue: OperationQueue = {
         let q = OperationQueue()
         q.name = "com.leonardo.ilhadinamica.shelfPromises"
@@ -86,6 +89,7 @@ final class ShelfService: ObservableObject {
 
     deinit {
         highlightResetTask?.cancel()
+        airDropStatusTask?.cancel()
     }
 
     func previewImage(for item: ShelfItem) -> NSImage? {
@@ -154,27 +158,17 @@ final class ShelfService: ObservableObject {
         }
     }
 
-    func handleDraggingInfo(_ sender: NSDraggingInfo) -> Bool {
-        if sender.draggingSource != nil {
-            return false
-        }
-
-        let pb = sender.draggingPasteboard
-
-        // 1. Direct file URLs (Finder, Desktop, saved files)
+    private func extractFileURLs(from pb: NSPasteboard) -> [URL] {
         if let urls = pb.readObjects(
             forClasses: [NSURL.self],
             options: [.urlReadingFileURLsOnly: true]
         ) as? [URL], !urls.isEmpty {
-            addFiles(urls, emitCallback: false)
-            return true
+            return urls
         }
 
         if let filenames = pb.propertyList(forType: NSPasteboard.PasteboardType("NSFilenamesPboardType")) as? [String],
            !filenames.isEmpty {
-            let urls = filenames.map { URL(fileURLWithPath: $0) }
-            addFiles(urls, emitCallback: false)
-            return true
+            return filenames.map { URL(fileURLWithPath: $0) }
         }
 
         if let itemURLs = pb.pasteboardItems?.compactMap({ item -> URL? in
@@ -185,7 +179,23 @@ final class ShelfService: ObservableObject {
             let standardized = url.standardizedFileURL
             return standardized.isFileURL ? standardized : nil
         }), !itemURLs.isEmpty {
-            addFiles(itemURLs, emitCallback: false)
+            return itemURLs
+        }
+
+        return []
+    }
+
+    func handleDraggingInfo(_ sender: NSDraggingInfo) -> Bool {
+        if sender.draggingSource != nil {
+            return false
+        }
+
+        let pb = sender.draggingPasteboard
+
+        // 1. Direct file URLs (Finder, Desktop, saved files)
+        let urls = extractFileURLs(from: pb)
+        if !urls.isEmpty {
+            addFiles(urls, emitCallback: false)
             return true
         }
 
@@ -330,6 +340,108 @@ final class ShelfService: ObservableObject {
 
     func openFile(_ item: ShelfItem) {
         NSWorkspace.shared.open(item.url)
+    }
+
+    // MARK: - AirDrop
+
+    func sendViaAirDrop(_ urls: [URL]) {
+        let validURLs = urls
+            .map(\.standardizedFileURL)
+            .filter { FileManager.default.fileExists(atPath: $0.path) }
+        guard !validURLs.isEmpty else {
+            setAirDropStatus("Nenhum arquivo válido")
+            return
+        }
+
+        guard let service = NSSharingService(named: .sendViaAirDrop),
+              service.canPerform(withItems: validURLs) else {
+            openAirDropWindow()
+            return
+        }
+
+        NSApp.activate(ignoringOtherApps: true)
+        service.perform(withItems: validURLs)
+        setAirDropStatus(validURLs.count == 1 ? "AirDrop pronto" : "AirDrop (\(validURLs.count))")
+    }
+
+    func sendItemViaAirDrop(_ item: ShelfItem) {
+        sendViaAirDrop([item.url])
+    }
+
+    func sendAllViaAirDrop() {
+        sendViaAirDrop(items.map(\.url))
+    }
+
+    func openAirDropWindow() {
+        let airDropURL = URL(fileURLWithPath: "/System/Library/CoreServices/Finder.app/Contents/Applications/AirDrop.app")
+        NSWorkspace.shared.open(airDropURL)
+        setAirDropStatus("AirDrop aberto")
+    }
+
+    func pickFilesForAirDrop() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = true
+        panel.title = "Escolher arquivos para enviar via AirDrop"
+        NSApp.activate(ignoringOtherApps: true)
+        panel.begin { [weak self] response in
+            guard response == .OK, !panel.urls.isEmpty else { return }
+            Task { @MainActor [weak self] in
+                self?.sendViaAirDrop(panel.urls)
+            }
+        }
+    }
+
+    func handleAirDropDrop(providers: [NSItemProvider]) -> Bool {
+        guard !providers.isEmpty else { return false }
+        let typeID = "public.file-url"
+        for provider in providers where provider.hasItemConformingToTypeIdentifier(typeID) {
+            provider.loadItem(forTypeIdentifier: typeID, options: nil) { [weak self] item, _ in
+                let resolvedURL: URL?
+                if let url = item as? URL {
+                    resolvedURL = url
+                } else if let data = item as? Data {
+                    resolvedURL = URL(dataRepresentation: data, relativeTo: nil)
+                } else if let str = item as? String {
+                    resolvedURL = URL(string: str)
+                } else {
+                    resolvedURL = nil
+                }
+                guard let resolvedURL else { return }
+                Task { @MainActor [weak self] in
+                    self?.sendViaAirDrop([resolvedURL])
+                }
+            }
+        }
+        return true
+    }
+
+    func handleExternalDropToAirDrop(_ sender: NSDraggingInfo) -> Bool {
+        guard sender.draggingSource == nil else { return false }
+        let urls = extractFileURLs(from: sender.draggingPasteboard)
+        if !urls.isEmpty {
+            addFiles(urls, emitCallback: false)
+            sendViaAirDrop(urls)
+            return true
+        }
+        let handled = handleDraggingInfo(sender)
+        if handled, let newest = items.first {
+            sendViaAirDrop([newest.url])
+        }
+        return handled
+    }
+
+    private func setAirDropStatus(_ text: String) {
+        airDropStatusTask?.cancel()
+        airDropStatusText = text
+        airDropStatusTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 2_500_000_000)
+            guard !Task.isCancelled, let self else { return }
+            if self.airDropStatusText == text {
+                self.airDropStatusText = nil
+            }
+        }
     }
 
     private func markHighlighted(_ id: UUID) {

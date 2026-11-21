@@ -13,6 +13,10 @@ final class OverlaySpaceManager {
     private typealias FSpaceDestroy = @convention(c) (Int32, UInt64) -> Int32
     private typealias FAddWindowsToSpaces = @convention(c) (Int32, CFArray, CFArray) -> Int32
     private typealias FRemoveWindowsFromSpaces = @convention(c) (Int32, CFArray, CFArray) -> Int32
+    private typealias FSpaceAddWindowsAndRemoveFromSpaces = @convention(c) (Int32, UInt64, CFArray, Int32) -> Int32
+    private typealias FGetActiveSpace = @convention(c) (Int32) -> UInt64
+    private typealias FInterruptMenuBarReveal = @convention(c) (Int32, Int32) -> Int32
+    private typealias FSpaceResetMenuBar = @convention(c) (Int32, UInt64) -> Int32
 
     private let handle: UnsafeMutableRawPointer?
     private let slsMainConnectionID: FMainConnectionID?
@@ -23,6 +27,10 @@ final class OverlaySpaceManager {
     private let slsSpaceDestroy: FSpaceDestroy?
     private let slsAddWindowsToSpaces: FAddWindowsToSpaces?
     private let slsRemoveWindowsFromSpaces: FRemoveWindowsFromSpaces?
+    private let slsSpaceAddWindowsAndRemoveFromSpaces: FSpaceAddWindowsAndRemoveFromSpaces?
+    private let slsGetActiveSpace: FGetActiveSpace?
+    private let slsInterruptMenuBarReveal: FInterruptMenuBarReveal?
+    private let slsSpaceResetMenuBar: FSpaceResetMenuBar?
 
     private var connection: Int32 = 0
     private var spaceID: UInt64 = 0
@@ -42,6 +50,10 @@ final class OverlaySpaceManager {
             self.slsSpaceDestroy = nil
             self.slsAddWindowsToSpaces = nil
             self.slsRemoveWindowsFromSpaces = nil
+            self.slsSpaceAddWindowsAndRemoveFromSpaces = nil
+            self.slsGetActiveSpace = nil
+            self.slsInterruptMenuBarReveal = nil
+            self.slsSpaceResetMenuBar = nil
             return
         }
 
@@ -58,6 +70,13 @@ final class OverlaySpaceManager {
         self.slsSpaceDestroy = resolve("SLSSpaceDestroy", as: FSpaceDestroy.self)
         self.slsAddWindowsToSpaces = resolve("SLSAddWindowsToSpaces", as: FAddWindowsToSpaces.self)
         self.slsRemoveWindowsFromSpaces = resolve("SLSRemoveWindowsFromSpaces", as: FRemoveWindowsFromSpaces.self)
+        self.slsSpaceAddWindowsAndRemoveFromSpaces = resolve(
+            "SLSSpaceAddWindowsAndRemoveFromSpaces",
+            as: FSpaceAddWindowsAndRemoveFromSpaces.self
+        )
+        self.slsGetActiveSpace = resolve("SLSGetActiveSpace", as: FGetActiveSpace.self)
+        self.slsInterruptMenuBarReveal = resolve("SLSInterruptMenuBarReveal", as: FInterruptMenuBarReveal.self)
+        self.slsSpaceResetMenuBar = resolve("SLSSpaceResetMenuBar", as: FSpaceResetMenuBar.self)
 
         setupSpaceIfPossible()
     }
@@ -89,17 +108,25 @@ final class OverlaySpaceManager {
         guard spaceID != 0,
               connection != 0,
               winNum > 0,
-              !attachedWindowNumbers.contains(winNum),
-              let slsAddWindowsToSpaces else {
+              !attachedWindowNumbers.contains(winNum) else {
             return
         }
 
-        _ = slsAddWindowsToSpaces(
-            connection,
-            [NSNumber(value: winNum)] as CFArray,
-            [NSNumber(value: spaceID)] as CFArray
-        )
-        attachedWindowNumbers.insert(winNum)
+        let windows = [NSNumber(value: winNum)] as CFArray
+        var attached = false
+        if let slsSpaceAddWindowsAndRemoveFromSpaces {
+            attached = slsSpaceAddWindowsAndRemoveFromSpaces(connection, spaceID, windows, 7) == 0
+        }
+        if !attached, let slsAddWindowsToSpaces {
+            attached = slsAddWindowsToSpaces(
+                connection,
+                windows,
+                [NSNumber(value: spaceID)] as CFArray
+            ) == 0
+        }
+        if attached {
+            attachedWindowNumbers.insert(winNum)
+        }
     }
 
     func detach(window: NSWindow) {
@@ -112,12 +139,38 @@ final class OverlaySpaceManager {
             return
         }
 
+        let windows = [NSNumber(value: winNum)] as CFArray
+        if let slsGetActiveSpace,
+           let slsAddWindowsToSpaces {
+            let activeSpace = slsGetActiveSpace(connection)
+            if activeSpace != 0 {
+                _ = slsAddWindowsToSpaces(
+                    connection,
+                    windows,
+                    [NSNumber(value: activeSpace)] as CFArray
+                )
+            }
+        }
+
         _ = slsRemoveWindowsFromSpaces(
             connection,
-            [NSNumber(value: winNum)] as CFArray,
+            windows,
             [NSNumber(value: spaceID)] as CFArray
         )
         attachedWindowNumbers.remove(winNum)
+    }
+
+    func interruptMenuBarReveal() {
+        guard connection != 0 else { return }
+        _ = slsInterruptMenuBarReveal?(connection, 0)
+    }
+
+    func resetActiveSpaceMenuBar() {
+        guard connection != 0 else { return }
+        _ = slsInterruptMenuBarReveal?(connection, 0)
+        if let activeSpace = slsGetActiveSpace?(connection), activeSpace != 0 {
+            _ = slsSpaceResetMenuBar?(connection, activeSpace)
+        }
     }
 
     func cleanup() {

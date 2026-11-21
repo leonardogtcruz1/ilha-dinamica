@@ -3,6 +3,7 @@ import AudioToolbox
 import CoreAudio
 import CoreGraphics
 import Foundation
+import IOKit.hidsystem
 
 struct AudioOutputDevice: Identifiable, Equatable {
     let id: AudioDeviceID
@@ -41,6 +42,8 @@ final class AudioControlService: ObservableObject {
     @Published private(set) var outputDevices: [AudioOutputDevice] = []
     @Published private(set) var bluetoothDevices: [BluetoothDeviceInfo] = []
     @Published private(set) var defaultOutputName: String = "Alto-falantes"
+    @Published private(set) var defaultOutputIconName: String = "speaker.wave.2.fill"
+    @Published private(set) var isExternalOrHeadphoneOutput: Bool = false
 
     @Published var isDraggingVolume: Bool = false
     @Published var isDraggingBrightness: Bool = false
@@ -69,15 +72,22 @@ final class AudioControlService: ObservableObject {
     nonisolated(unsafe) private var systemDevicesListenerBlock: AudioObjectPropertyListenerBlock?
     nonisolated(unsafe) private var defaultOutputListenerBlock: AudioObjectPropertyListenerBlock?
     nonisolated(unsafe) private var defaultInputListenerBlock: AudioObjectPropertyListenerBlock?
+    nonisolated(unsafe) private var globalSystemDefinedMonitor: Any?
+    nonisolated(unsafe) private var localSystemDefinedMonitor: Any?
 
     private var savedMicVolume: Float = 0.8
     private var hasInitializedVolume = false
     private var hasInitializedBrightness = false
     private var hasInitializedBluetooth = false
+    private var hasInitializedOutputDevice = false
+    private var previousOutputDeviceID: AudioDeviceID = 0
+    private var lastHeadphoneToastTime: TimeInterval = -100
+    private var wasSystemBannerOnscreen = false
     private var knownBluetoothIDs = Set<String>()
     private var lastObservedVolume: Float = -1
     private var lastObservedMuted: Bool = false
     private var lastObservedBrightness: Float = -1
+    private var lastUserBrightnessKeyTime: TimeInterval = -100
     private var lastVolumeHapticEdge: Int = 0
     private var lastBrightnessHapticEdge: Int = 0
     private var prevVolumeDragX: CGFloat?
@@ -91,6 +101,7 @@ final class AudioControlService: ObservableObject {
         refreshAudioState(emitToast: false)
         refreshBrightness(emitToast: false)
         setupCoreAudioListeners()
+        setupBrightnessKeyMonitors()
         startTimers()
         Task { await refreshBluetoothDevices(emitToast: false) }
     }
@@ -98,6 +109,12 @@ final class AudioControlService: ObservableObject {
     deinit {
         brightnessTimer?.invalidate()
         bluetoothTimer?.invalidate()
+        if let globalSystemDefinedMonitor {
+            NSEvent.removeMonitor(globalSystemDefinedMonitor)
+        }
+        if let localSystemDefinedMonitor {
+            NSEvent.removeMonitor(localSystemDefinedMonitor)
+        }
         removeSystemListeners()
         if currentObservedOutputDevice != 0 {
             removeOutputDeviceListeners(for: currentObservedOutputDevice)
@@ -403,9 +420,52 @@ final class AudioControlService: ObservableObject {
         if abs(clamped - lastObservedBrightness) > 0.012 {
             brightness = clamped
             lastObservedBrightness = clamped
-            if emitToast && !isDraggingBrightness {
+            if emitToast
+                && !isDraggingBrightness
+                && (ProcessInfo.processInfo.systemUptime - lastUserBrightnessKeyTime) < 0.6 {
                 onBrightnessChanged?(clamped)
             }
+        }
+    }
+
+    private func setupBrightnessKeyMonitors() {
+        globalSystemDefinedMonitor = NSEvent.addGlobalMonitorForEvents(
+            matching: .systemDefined
+        ) { [weak self] event in
+            guard event.subtype.rawValue == 8 else { return }
+            let keyCode = Int32((event.data1 & 0xFFFF_0000) >> 16)
+            let keyState = ((event.data1 & 0x0000_FFFF) & 0xFF00) >> 8
+            guard (keyCode == NX_KEYTYPE_BRIGHTNESS_UP || keyCode == NX_KEYTYPE_BRIGHTNESS_DOWN),
+                  (keyState == 0x0A || keyState == 0x0B) else {
+                return
+            }
+            Task { @MainActor [weak self] in
+                self?.recordUserBrightnessKeyPress()
+            }
+        }
+
+        localSystemDefinedMonitor = NSEvent.addLocalMonitorForEvents(
+            matching: .systemDefined
+        ) { [weak self] event in
+            if event.subtype.rawValue == 8 {
+                let keyCode = Int32((event.data1 & 0xFFFF_0000) >> 16)
+                let keyState = ((event.data1 & 0x0000_FFFF) & 0xFF00) >> 8
+                if (keyCode == NX_KEYTYPE_BRIGHTNESS_UP || keyCode == NX_KEYTYPE_BRIGHTNESS_DOWN),
+                   (keyState == 0x0A || keyState == 0x0B) {
+                    Task { @MainActor [weak self] in
+                        self?.recordUserBrightnessKeyPress()
+                    }
+                }
+            }
+            return event
+        }
+    }
+
+    private func recordUserBrightnessKeyPress() {
+        lastUserBrightnessKeyTime = ProcessInfo.processInfo.systemUptime
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 25_000_000)
+            self?.refreshBrightness(emitToast: true)
         }
     }
 
@@ -548,7 +608,33 @@ final class AudioControlService: ObservableObject {
 
         guard let dev = defaultDeviceID(isInput: false) else { return }
         attachOutputDeviceListeners(to: dev)
-        defaultOutputName = deviceName(dev) ?? "Alto-falantes"
+
+        let transport = deviceTransportType(dev)
+        let isBT = transport == kAudioDeviceTransportTypeBluetooth
+            || transport == kAudioDeviceTransportTypeBluetoothLE
+        let isJack = isHeadphoneJackOutput(dev)
+        let resolvedName = deviceName(dev) ?? "Alto-falantes"
+        let resolvedIcon = Self.iconName(
+            forDeviceName: resolvedName,
+            isBluetooth: isBT,
+            transport: transport,
+            isHeadphoneJack: isJack
+        )
+        let isExternalAudio = isBT
+            || isJack
+            || transport == kAudioDeviceTransportTypeUSB
+            || transport == kAudioDeviceTransportTypeAirPlay
+            || resolvedIcon != "speaker.wave.2.fill"
+
+        defaultOutputName = resolvedName
+        defaultOutputIconName = resolvedIcon
+        isExternalOrHeadphoneOutput = isExternalAudio
+
+        if hasInitializedOutputDevice && dev != previousOutputDeviceID && isExternalAudio {
+            emitHeadphoneConnectedToast(forOutputName: resolvedName)
+        }
+        previousOutputDeviceID = dev
+        hasInitializedOutputDevice = true
 
         let newVol = readDeviceVolume(dev, scope: kAudioDevicePropertyScopeOutput) ?? volume
         let newMuted = readDeviceMute(dev, scope: kAudioDevicePropertyScopeOutput) ?? false
@@ -573,6 +659,104 @@ final class AudioControlService: ObservableObject {
                 onVolumeChanged?(newVol, newMuted)
             }
         }
+    }
+
+    func iconForBluetoothDevice(_ device: BluetoothDeviceInfo) -> String {
+        let minorLower = device.minorType.lowercased()
+        let isHeadphone = minorLower.contains("headphone") || minorLower.contains("headset")
+        return Self.iconName(
+            forDeviceName: device.name,
+            isBluetooth: true,
+            transport: kAudioDeviceTransportTypeBluetooth,
+            isHeadphoneJack: isHeadphone
+        )
+    }
+
+    static func iconName(
+        forDeviceName name: String,
+        isBluetooth: Bool,
+        transport: UInt32,
+        isHeadphoneJack: Bool
+    ) -> String {
+        let lower = name.lowercased()
+        if lower.contains("airpods max") { return "airpodsmax" }
+        if lower.contains("airpods pro") { return "airpodspro" }
+        if lower.contains("airpods") { return "airpods" }
+        if isHeadphoneJack
+            || lower.contains("headphone")
+            || lower.contains("headset")
+            || lower.contains("fone")
+            || lower.contains("earbud")
+            || lower.contains("beats")
+            || lower.contains("wh-")
+            || lower.contains("buds") {
+            return "headphones"
+        }
+        if lower.contains("jbl") || lower.contains("boom") || lower.contains("soundbar") {
+            return "hifispeaker.fill"
+        }
+        if lower.contains("speaker") || lower.contains("alto-falante") {
+            return isBluetooth ? "hifispeaker.fill" : "speaker.wave.2.fill"
+        }
+        if isBluetooth {
+            return "headphones"
+        }
+        if transport == kAudioDeviceTransportTypeHDMI || transport == kAudioDeviceTransportTypeDisplayPort {
+            return "tv.and.hifispeaker.fill"
+        }
+        if transport == kAudioDeviceTransportTypeAirPlay {
+            return "airplayaudio"
+        }
+        return "speaker.wave.2.fill"
+    }
+
+    private func emitHeadphoneConnectedToast(forOutputName outputName: String) {
+        lastHeadphoneToastTime = ProcessInfo.processInfo.systemUptime
+        if let matched = matchedBluetoothDevice(forOutputName: outputName, in: bluetoothDevices) {
+            onBluetoothConnected?(matched)
+        } else {
+            let placeholder = BluetoothDeviceInfo(
+                id: outputName,
+                name: outputName,
+                minorType: "Headphones",
+                batteryMain: nil,
+                batteryLeft: nil,
+                batteryRight: nil,
+                batteryCase: nil,
+                isAudio: true
+            )
+            onBluetoothConnected?(placeholder)
+        }
+    }
+
+    private func matchedBluetoothDevice(
+        forOutputName outputName: String,
+        in devices: [BluetoothDeviceInfo]
+    ) -> BluetoothDeviceInfo? {
+        let normalized = outputName.lowercased()
+        if let exact = devices.first(where: { $0.name.lowercased() == normalized }) {
+            return exact
+        }
+        return devices.first(where: {
+            $0.isAudio && (
+                $0.name.lowercased().contains(normalized) || normalized.contains($0.name.lowercased())
+            )
+        })
+    }
+
+    private func isHeadphoneJackOutput(_ deviceID: AudioDeviceID) -> Bool {
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyDataSource,
+            mScope: kAudioDevicePropertyScopeOutput,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var sourceCode: UInt32 = 0
+        var size = UInt32(MemoryLayout<UInt32>.size)
+        guard AudioObjectGetPropertyData(deviceID, &addr, 0, nil, &size, &sourceCode) == noErr else {
+            return false
+        }
+        // 'hdpn' = 0x6864706e
+        return sourceCode == 0x6864706E
     }
 
     private func refreshMicState() {
@@ -777,9 +961,10 @@ final class AudioControlService: ObservableObject {
     // MARK: - Timers & Bluetooth Polling
 
     private func startTimers() {
-        let bTimer = Timer(timeInterval: 0.2, repeats: true) { [weak self] _ in
+        let bTimer = Timer(timeInterval: 0.15, repeats: true) { [weak self] _ in
             Task { @MainActor in
-                self?.refreshBrightness(emitToast: true)
+                self?.refreshBrightness(emitToast: false)
+                self?.checkSystemBannerWindow()
             }
         }
         RunLoop.main.add(bTimer, forMode: .common)
@@ -794,14 +979,59 @@ final class AudioControlService: ObservableObject {
         bluetoothTimer = btTimer
     }
 
+    private func checkSystemBannerWindow() {
+        guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] else {
+            wasSystemBannerOnscreen = false
+            return
+        }
+
+        let bannerVisible = list.contains { info in
+            guard let layer = info[kCGWindowLayer as String] as? Int, layer == 2005,
+                  let bounds = info[kCGWindowBounds as String] as? [String: Any],
+                  let y = (bounds["Y"] as? NSNumber)?.doubleValue,
+                  let width = (bounds["Width"] as? NSNumber)?.doubleValue,
+                  y <= 6, width >= 250, width <= 460 else {
+                return false
+            }
+            let owner = (info[kCGWindowOwnerName as String] as? String) ?? ""
+            return !owner.contains("Ilha")
+        }
+
+        if bannerVisible && !wasSystemBannerOnscreen {
+            let now = ProcessInfo.processInfo.systemUptime
+            if (now - lastHeadphoneToastTime) > 2.5 {
+                let candidateName: String = {
+                    if isExternalOrHeadphoneOutput {
+                        return defaultOutputName
+                    }
+                    if let btAudio = primaryAudioBluetoothDevice {
+                        return btAudio.name
+                    }
+                    return "Fones Bluetooth"
+                }()
+                emitHeadphoneConnectedToast(forOutputName: candidateName)
+                Task { await refreshBluetoothDevices(emitToast: true) }
+            }
+        }
+        wasSystemBannerOnscreen = bannerVisible
+    }
+
     func refreshBluetoothDevices(emitToast: Bool) async {
         let devices = await Self.fetchConnectedBluetoothDevices()
         let newIDs = Set(devices.map(\.id))
 
         if hasInitializedBluetooth && emitToast {
             let newlyConnected = devices.filter { !knownBluetoothIDs.contains($0.id) }
+            let now = ProcessInfo.processInfo.systemUptime
+            let recentlyPrompted = (now - lastHeadphoneToastTime) < 4.0
+
             if let firstNew = newlyConnected.first(where: \.isAudio) ?? newlyConnected.first {
+                lastHeadphoneToastTime = now
                 onBluetoothConnected?(firstNew)
+            } else if recentlyPrompted,
+                      let matched = matchedBluetoothDevice(forOutputName: defaultOutputName, in: devices)
+                        ?? devices.first(where: \.isAudio) {
+                onBluetoothConnected?(matched)
             }
         }
 

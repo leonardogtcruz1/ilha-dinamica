@@ -55,14 +55,16 @@ final class MediaKeyInterceptor: ObservableObject {
     }
 
     private func syncState(promptIfNeeded: Bool) {
-        let trusted = AXIsProcessTrusted()
-        isAccessibilityGranted = trusted
-
-        let shouldIntercept = settings.replaceSystemHUD && settings.showHudToasts
-        guard shouldIntercept else {
-            disable()
+        guard settings.replaceSystemHUD && settings.showHudToasts else {
+            tearDownTap()
+            stopPermissionPolling()
+            isAccessibilityGranted = AXIsProcessTrusted()
+            isActive = false
             return
         }
+
+        let trusted = AXIsProcessTrusted()
+        isAccessibilityGranted = trusted
 
         if trusted {
             stopPermissionPolling()
@@ -89,7 +91,7 @@ final class MediaKeyInterceptor: ObservableObject {
         tearDownTap()
 
         // Event type 14 = NX_SYSDEFINED (hardware media/brightness keys)
-        let mask: CGEventMask = CGEventMask(1 << 14)
+        let mask: CGEventMask = (1 << 14)
         let refcon = Unmanaged.passUnretained(self).toOpaque()
 
         guard let tap = CGEvent.tapCreate(
@@ -157,6 +159,10 @@ final class MediaKeyInterceptor: ObservableObject {
             if let tap = eventTap {
                 CGEvent.tapEnable(tap: tap, enable: true)
             }
+            return Unmanaged.passUnretained(event)
+        }
+
+        guard settings.replaceSystemHUD && settings.showHudToasts else {
             return Unmanaged.passUnretained(event)
         }
 

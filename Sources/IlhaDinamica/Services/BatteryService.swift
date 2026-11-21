@@ -16,6 +16,10 @@ final class BatteryService: ObservableObject {
     @Published private(set) var temperatureCelsius: Double?
     @Published private(set) var powerWatts: Double?
     @Published private(set) var adapterWatts: Int?
+    @Published private(set) var adapterName: String?
+    @Published private(set) var adapterVoltageVolts: Double?
+    @Published private(set) var systemPowerInWatts: Double?
+    @Published private(set) var batteryChargeWatts: Double?
     @Published private(set) var statusText: String = "Na bateria"
 
     var onBatteryEvent: ((ToastEvent) -> Void)?
@@ -23,6 +27,7 @@ final class BatteryService: ObservableObject {
     private var runLoopSource: CFRunLoopSource?
     private var refreshTimer: Timer?
     private var lowPowerObserver: NSObjectProtocol?
+    private var postPlugRefreshTask: Task<Void, Never>?
 
     private var hasInitialized = false
     private var previousPluggedIn = false
@@ -36,6 +41,7 @@ final class BatteryService: ObservableObject {
 
     deinit {
         refreshTimer?.invalidate()
+        postPlugRefreshTask?.cancel()
         if let lowPowerObserver {
             NotificationCenter.default.removeObserver(lowPowerObserver)
         }
@@ -122,6 +128,10 @@ final class BatteryService: ObservableObject {
 
         let smartData = readSmartBatteryDetails()
 
+        if newIsPluggedIn && newTimeRemaining == nil {
+            newTimeRemaining = smartData.avgTimeToFullMinutes
+        }
+
         percentage = newPercentage
         isCharging = newIsCharging
         isPluggedIn = newIsPluggedIn
@@ -132,6 +142,10 @@ final class BatteryService: ObservableObject {
         temperatureCelsius = smartData.temperatureCelsius
         powerWatts = smartData.powerWatts
         adapterWatts = smartData.adapterWatts
+        adapterName = newIsPluggedIn ? smartData.adapterName : nil
+        adapterVoltageVolts = newIsPluggedIn ? smartData.adapterVoltageVolts : nil
+        systemPowerInWatts = newIsPluggedIn ? smartData.systemPowerInWatts : nil
+        batteryChargeWatts = newIsPluggedIn ? smartData.batteryChargeWatts : nil
 
         if newIsFullyCharged || (newIsPluggedIn && newPercentage >= 100 && !newIsCharging) {
             statusText = "Bateria carregada"
@@ -148,7 +162,10 @@ final class BatteryService: ObservableObject {
                 if newIsPluggedIn {
                     alertedLowTier = nil
                     onBatteryEvent?(ToastEvent(kind: .charging(percent: newPercentage, watts: smartData.adapterWatts)))
+                    schedulePostPlugRefreshes()
                 } else {
+                    postPlugRefreshTask?.cancel()
+                    postPlugRefreshTask = nil
                     onBatteryEvent?(ToastEvent(kind: .unplugged(percent: newPercentage)))
                 }
             } else if newIsPluggedIn && !previousFullyCharged && newIsFullyCharged {
@@ -171,12 +188,29 @@ final class BatteryService: ObservableObject {
         hasInitialized = true
     }
 
+    private func schedulePostPlugRefreshes() {
+        postPlugRefreshTask?.cancel()
+        postPlugRefreshTask = Task { @MainActor [weak self] in
+            let intervalsNs: [UInt64] = [800_000_000, 1_000_000_000, 1_400_000_000]
+            for waitNs in intervalsNs {
+                try? await Task.sleep(nanoseconds: waitNs)
+                guard !Task.isCancelled, let self else { return }
+                self.refresh(emitToasts: false)
+            }
+        }
+    }
+
     private struct SmartBatteryDetails {
         var cycleCount: Int?
         var healthPercent: Int?
         var temperatureCelsius: Double?
         var powerWatts: Double?
         var adapterWatts: Int?
+        var adapterName: String?
+        var adapterVoltageVolts: Double?
+        var systemPowerInWatts: Double?
+        var batteryChargeWatts: Double?
+        var avgTimeToFullMinutes: Int?
     }
 
     private func readSmartBatteryDetails() -> SmartBatteryDetails {
@@ -213,12 +247,39 @@ final class BatteryService: ObservableObject {
            let voltage = (props["Voltage"] as? NSNumber)?.int64Value {
             let watts = abs(Double(amps) * Double(voltage)) / 1_000_000.0
             details.powerWatts = watts
+            if amps > 0 {
+                details.batteryChargeWatts = Double(amps) * Double(voltage) / 1_000_000.0
+            }
         }
 
-        if let adapter = props["AdapterDetails"] as? [String: Any],
-           let watts = (adapter["Watts"] as? NSNumber)?.intValue,
-           watts > 0 {
-            details.adapterWatts = watts
+        if let avgTtf = (props["AvgTimeToFull"] as? NSNumber)?.intValue,
+           avgTtf > 0 && avgTtf < 6000 {
+            details.avgTimeToFullMinutes = avgTtf
+        }
+
+        if let adapter = props["AdapterDetails"] as? [String: Any] {
+            if let watts = (adapter["Watts"] as? NSNumber)?.intValue, watts > 0 {
+                details.adapterWatts = watts
+            }
+            if let name = (adapter["Name"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !name.isEmpty {
+                details.adapterName = name
+            }
+            if let mv = (adapter["AdapterVoltage"] as? NSNumber)?.doubleValue, mv > 0 {
+                details.adapterVoltageVolts = mv / 1000.0
+            }
+        }
+
+        if let telemetry = props["PowerTelemetryData"] as? [String: Any] {
+            if let sysPowerMw = (telemetry["SystemPowerIn"] as? NSNumber)?.doubleValue, sysPowerMw > 0 {
+                details.systemPowerInWatts = sysPowerMw / 1000.0
+            }
+            if let battPowerMw = (telemetry["BatteryPower"] as? NSNumber)?.int64Value, battPowerMw > 0 {
+                details.batteryChargeWatts = Double(battPowerMw) / 1000.0
+            }
+            if let sysVoltageMv = (telemetry["SystemVoltageIn"] as? NSNumber)?.doubleValue, sysVoltageMv > 0 {
+                details.adapterVoltageVolts = sysVoltageMv / 1000.0
+            }
         }
 
         return details

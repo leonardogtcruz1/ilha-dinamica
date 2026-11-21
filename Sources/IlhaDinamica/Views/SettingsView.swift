@@ -21,7 +21,43 @@ struct SettingsView: View {
                 Toggle("Mac (Bateria, CPU, RAM & Clima)", isOn: $settings.enableSystemModule)
             }
 
+            Section("Biblioteca de Widgets Extras") {
+                ForEach(IslandTab.allCases.filter { !$0.isDefaultEnabled }) { tab in
+                    Toggle(
+                        "\(tab.title) — \(tab.subtitle)",
+                        isOn: Binding(
+                            get: { settings.isTabEnabled(tab) },
+                            set: { settings.setTabEnabled(tab, enabled: $0) }
+                        )
+                    )
+                }
+            }
+
             Section("Comportamento e Alertas") {
+                Picker("Estilo e layout da ilha", selection: $settings.layoutPreset) {
+                    ForEach(IslandLayoutPreset.allCases) { preset in
+                        Text("\(preset.title) (\(preset.badge))").tag(preset)
+                    }
+                }
+
+                Picker("Cor da ilha (fundo e borda)", selection: $settings.islandSurfaceTheme) {
+                    ForEach(IslandSurfaceTheme.allCases) { theme in
+                        Text(theme.title).tag(theme)
+                    }
+                }
+
+                Picker("Cor dos botões e abas", selection: $settings.buttonAccentColor) {
+                    ForEach(IslandElementColor.allCases) { item in
+                        Text(item.title).tag(item)
+                    }
+                }
+
+                Picker("Cor dos sliders e barras", selection: $settings.sliderAccentColor) {
+                    ForEach(IslandElementColor.allCases) { item in
+                        Text(item.title).tag(item)
+                    }
+                }
+
                 Toggle("Expandir ao passar o mouse", isOn: $settings.openOnHover)
 
                 if settings.openOnHover {
@@ -145,7 +181,12 @@ struct SettingsView: View {
                     Button("Volume HUD") {
                         if coordinator.mode == .expanded { coordinator.collapse() }
                         coordinator.showToast(
-                            ToastEvent(kind: .volume(level: audio.volume, isMuted: audio.isMuted))
+                            ToastEvent(kind: .volume(
+                                level: audio.volume,
+                                isMuted: audio.isMuted,
+                                deviceName: audio.defaultOutputName,
+                                deviceIcon: audio.defaultOutputIconName
+                            ))
                         )
                     }
 
@@ -154,10 +195,16 @@ struct SettingsView: View {
                         let bt = audio.primaryAudioBluetoothDevice
                         coordinator.showToast(
                             ToastEvent(kind: .bluetoothConnected(
-                                name: bt?.name ?? "AirPods Pro",
-                                batteryText: bt?.batterySummary ?? "E 88% • D 90% • Estojo 61%",
-                                isAudio: true
-                            ))
+                                name: bt?.name ?? "AirPods Pro 3 de Leo",
+                                batteryText: bt?.batterySummary ?? "E 98% • D 100% • Estojo 14%",
+                                isAudio: true,
+                                batteryLeft: bt?.batteryLeft ?? "98%",
+                                batteryRight: bt?.batteryRight ?? "100%",
+                                batteryCase: bt?.batteryCase ?? "14%",
+                                batteryMain: bt?.batteryMain,
+                                iconName: bt.map { audio.iconForBluetoothDevice($0) } ?? "airpodspro"
+                            )),
+                            duration: 4.2
                         )
                     }
 

@@ -15,7 +15,14 @@ struct ShelfExpandedView: View {
                         .font(.system(size: 12.5, weight: .semibold))
                         .foregroundStyle(.white)
 
-                    if !shelf.items.isEmpty {
+                    if let status = shelf.airDropStatusText {
+                        Text(status)
+                            .font(.system(size: 9.5, weight: .bold))
+                            .foregroundStyle(Color(red: 0.36, green: 0.76, blue: 1.0))
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 2)
+                            .background(Color(red: 0.36, green: 0.76, blue: 1.0).opacity(0.16), in: Capsule())
+                    } else if !shelf.items.isEmpty {
                         Text("• arraste pros apps")
                             .font(.system(size: 10, weight: .medium))
                             .foregroundStyle(Color.white.opacity(0.45))
@@ -54,21 +61,100 @@ struct ShelfExpandedView: View {
                 }
             }
 
-            if shelf.items.isEmpty && shelf.pendingDropCount == 0 {
-                dropEmptyState
-            } else {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 10) {
-                        if shelf.pendingDropCount > 0 {
-                            importingPlaceholderCard
+            HStack(spacing: 10) {
+                airDropSectionCard
+
+                if shelf.items.isEmpty && shelf.pendingDropCount == 0 {
+                    dropEmptyState
+                } else {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 10) {
+                            if shelf.pendingDropCount > 0 {
+                                importingPlaceholderCard
+                            }
+                            ForEach(shelf.items) { item in
+                                shelfCard(item)
+                            }
                         }
-                        ForEach(shelf.items) { item in
-                            shelfCard(item)
-                        }
+                        .padding(.vertical, 1)
                     }
-                    .padding(.vertical, 1)
                 }
             }
+        }
+    }
+
+    private var airDropSectionCard: some View {
+        let blue = Color(red: 0.30, green: 0.74, blue: 1.0)
+        let targeted = shelf.isAirDropDropTargeted
+
+        return VStack(spacing: 5) {
+            Button {
+                if shelf.items.isEmpty {
+                    shelf.pickFilesForAirDrop()
+                } else {
+                    shelf.sendAllViaAirDrop()
+                }
+            } label: {
+                VStack(spacing: 5) {
+                    ZStack {
+                        Circle()
+                            .stroke(blue.opacity(targeted ? 0.55 : 0.22), lineWidth: 1)
+                            .frame(width: 44, height: 44)
+                        Circle()
+                            .stroke(blue.opacity(targeted ? 0.75 : 0.34), lineWidth: 1)
+                            .frame(width: 33, height: 33)
+                        Circle()
+                            .fill(blue.opacity(targeted ? 0.32 : 0.18))
+                            .frame(width: 24, height: 24)
+                        Image(systemName: "dot.radiowaves.left.and.right")
+                            .font(.system(size: 12.5, weight: .bold))
+                            .foregroundStyle(targeted ? .white : blue)
+                    }
+
+                    Text("AirDrop")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(.white)
+
+                    Text(
+                        targeted
+                            ? "Solte p/ enviar"
+                            : (shelf.items.isEmpty ? "Escolher arquivos" : "Enviar tudo (\(shelf.items.count))")
+                    )
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(targeted ? .white : blue)
+                    .lineLimit(1)
+                }
+                .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.plain)
+            .help(shelf.items.isEmpty ? "Escolher arquivo para enviar via AirDrop" : "Enviar todos os arquivos da Bandeja via AirDrop")
+
+            Button {
+                shelf.openAirDropWindow()
+            } label: {
+                Text("Abrir Finder")
+                    .font(.system(size: 8.5, weight: .semibold))
+                    .foregroundStyle(Color.white.opacity(0.75))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 2.5)
+                    .background(Color.white.opacity(0.10), in: Capsule())
+            }
+            .buttonStyle(.plain)
+            .help("Abrir janela do AirDrop no Finder para receber ou enviar")
+        }
+        .padding(.horizontal, 7)
+        .padding(.vertical, 7)
+        .frame(width: 112, height: 118)
+        .background(
+            targeted ? blue.opacity(0.20) : blue.opacity(0.08),
+            in: RoundedRectangle(cornerRadius: 13, style: .continuous)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 13, style: .continuous)
+                .stroke(targeted ? blue : blue.opacity(0.32), lineWidth: targeted ? 1.4 : 0.9)
+        )
+        .onDrop(of: [.fileURL], isTargeted: $shelf.isAirDropDropTargeted) { providers in
+            shelf.handleAirDropDrop(providers: providers)
         }
     }
 
@@ -162,15 +248,27 @@ struct ShelfExpandedView: View {
                                 .font(.system(size: 8.5, weight: .bold))
                                 .foregroundStyle(Color(red: 0.22, green: 0.90, blue: 0.48))
                         } else {
-                            Button {
-                                shelf.copyToClipboard(item)
-                            } label: {
-                                Image(systemName: "doc.on.doc")
-                                    .font(.system(size: 9, weight: .semibold))
-                                    .foregroundStyle(Color.white.opacity(0.50))
+                            HStack(spacing: 5) {
+                                Button {
+                                    shelf.sendItemViaAirDrop(item)
+                                } label: {
+                                    Image(systemName: "dot.radiowaves.left.and.right")
+                                        .font(.system(size: 9, weight: .semibold))
+                                        .foregroundStyle(Color(red: 0.30, green: 0.74, blue: 1.0).opacity(0.88))
+                                }
+                                .buttonStyle(.plain)
+                                .help("Enviar via AirDrop")
+
+                                Button {
+                                    shelf.copyToClipboard(item)
+                                } label: {
+                                    Image(systemName: "doc.on.doc")
+                                        .font(.system(size: 9, weight: .semibold))
+                                        .foregroundStyle(Color.white.opacity(0.50))
+                                }
+                                .buttonStyle(.plain)
+                                .help("Copiar arquivo")
                             }
-                            .buttonStyle(.plain)
-                            .help("Copiar arquivo")
                         }
                     }
                 }
@@ -202,6 +300,7 @@ struct ShelfExpandedView: View {
                 dragPreview(for: item)
             })
             .contextMenu {
+                Button("Enviar via AirDrop") { shelf.sendItemViaAirDrop(item) }
                 Button("Abrir") { shelf.openFile(item) }
                 Button("Copiar") { shelf.copyToClipboard(item) }
                 Button("Mostrar no Finder") { shelf.revealInFinder(item) }

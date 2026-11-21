@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct IslandRootView: View {
@@ -15,6 +16,7 @@ struct IslandRootView: View {
     @ObservedObject var system: SystemMonitorService
     @ObservedObject var weather: WeatherService
     @ObservedObject var recorder: ScreenRecorderService
+    @ObservedObject var extraWidgets: ExtraWidgetsService
 
     private var islandShape: NotchIslandShape {
         NotchIslandShape(
@@ -33,7 +35,10 @@ struct IslandRootView: View {
         case .toast:
             return 10
         case .expanded:
-            return 12
+            if coordinator.isEditingWidgets || coordinator.isPresetsOpen {
+                return 12
+            }
+            return settings.layoutPreset.topEarRadius
         }
     }
 
@@ -46,7 +51,10 @@ struct IslandRootView: View {
         case .toast:
             return 22
         case .expanded:
-            return 28
+            if coordinator.isEditingWidgets || coordinator.isPresetsOpen {
+                return 28
+            }
+            return settings.layoutPreset.bottomCornerRadius
         }
     }
 
@@ -72,6 +80,84 @@ struct IslandRootView: View {
             : Color.white.opacity(rimOpacity)
     }
 
+    @ViewBuilder
+    private var islandBackground: some View {
+        let preset = settings.layoutPreset
+        if coordinator.mode == .idle && coordinator.geometry.hasNotch {
+            Color.black
+        } else {
+            ZStack {
+                if settings.effectiveUsesGlassMaterial {
+                    IslandGlassBackdrop()
+                    LinearGradient(
+                        colors: [
+                            settings.effectiveSurfaceTopColor,
+                            settings.effectiveSurfaceBottomColor
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                    if settings.effectiveHasLiquidSheen {
+                        LinearGradient(
+                            colors: [
+                                Color.white.opacity(0.18),
+                                Color.white.opacity(0.04),
+                                Color.clear,
+                                Color.white.opacity(0.08)
+                            ],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    }
+                } else {
+                    LinearGradient(
+                        colors: [
+                            settings.effectiveSurfaceTopColor,
+                            settings.effectiveSurfaceBottomColor
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                }
+
+                if preset.hasAmbientGlow {
+                    RadialGradient(
+                        colors: [
+                            Color(red: 0.18, green: 0.88, blue: 1.0).opacity(0.16),
+                            Color(red: 0.56, green: 0.34, blue: 1.0).opacity(0.10),
+                            Color.clear
+                        ],
+                        center: .top,
+                        startRadius: 10,
+                        endRadius: 300
+                    )
+                }
+            }
+        }
+    }
+
+    private var rimStrokeStyle: AnyShapeStyle {
+        if shelf.isDropTargeted {
+            return AnyShapeStyle(Color(red: 0.36, green: 0.76, blue: 1.0))
+        }
+        if coordinator.mode == .idle {
+            return AnyShapeStyle(rimColor)
+        }
+        return AnyShapeStyle(
+            LinearGradient(
+                colors: settings.effectiveRimColors,
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+        )
+    }
+
+    private var activeRimLineWidth: CGFloat {
+        if shelf.isDropTargeted { return 1.4 }
+        if coordinator.mode == .idle { return 0.85 }
+        return settings.effectiveRimLineWidth
+    }
+
     private var shadowRadius: CGFloat {
         switch coordinator.mode {
         case .idle:
@@ -94,7 +180,9 @@ struct IslandRootView: View {
 
             ZStack {
                 islandShape
-                    .fill(Color.black)
+                    .fill(Color.clear)
+                    .background(islandBackground)
+                    .clipShape(islandShape)
 
                 contentView
                     .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .top)))
@@ -106,7 +194,7 @@ struct IslandRootView: View {
             .clipShape(islandShape)
             .overlay(
                 islandShape
-                    .stroke(rimColor, lineWidth: shelf.isDropTargeted ? 1.4 : 0.85)
+                    .stroke(rimStrokeStyle, lineWidth: activeRimLineWidth)
             )
             .shadow(
                 color: Color.black.opacity(shadowRadius > 0 ? 0.55 : 0),
@@ -130,6 +218,7 @@ struct IslandRootView: View {
         )
         .animation(settings.expandSpring, value: coordinator.mode)
         .animation(settings.sizeSpring, value: coordinator.currentSize)
+        .animation(settings.sizeSpring, value: settings.layoutPreset)
     }
 
     @ViewBuilder
@@ -153,7 +242,9 @@ struct IslandRootView: View {
             ToastIslandView(
                 event: event,
                 geometry: coordinator.geometry,
-                music: music
+                music: music,
+                battery: battery,
+                settings: settings
             )
 
         case .expanded:
@@ -171,8 +262,27 @@ struct IslandRootView: View {
                 camera: camera,
                 system: system,
                 weather: weather,
-                recorder: recorder
+                recorder: recorder,
+                extraWidgets: extraWidgets
             )
         }
+    }
+}
+
+private struct IslandGlassBackdrop: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let view = NSVisualEffectView()
+        view.material = .hudWindow
+        view.blendingMode = .behindWindow
+        view.state = .active
+        view.appearance = NSAppearance(named: .darkAqua)
+        return view
+    }
+
+    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {
+        nsView.material = .hudWindow
+        nsView.blendingMode = .behindWindow
+        nsView.state = .active
+        nsView.appearance = NSAppearance(named: .darkAqua)
     }
 }

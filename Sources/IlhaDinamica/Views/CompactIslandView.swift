@@ -28,15 +28,15 @@ struct CompactIslandView: View {
 
             if coordinator.geometry.hasNotch {
                 Spacer()
-                    .frame(width: coordinator.geometry.notchWidth + 6)
+                    .frame(width: coordinator.geometry.notchWidth + 12)
             } else {
-                Spacer(minLength: 10)
+                Spacer(minLength: 8)
             }
 
             rightWing
                 .frame(maxWidth: .infinity, alignment: .trailing)
         }
-        .padding(.horizontal, coordinator.geometry.hasNotch ? 15 : 12)
+        .padding(.horizontal, coordinator.geometry.hasNotch ? 11 : 10)
         .frame(height: coordinator.currentSize.height)
     }
 
@@ -61,17 +61,17 @@ struct CompactIslandView: View {
                     Image(nsImage: artwork)
                         .resizable()
                         .aspectRatio(contentMode: .fill)
-                        .frame(width: 21, height: 21)
-                        .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+                        .frame(width: 19, height: 19)
+                        .clipShape(RoundedRectangle(cornerRadius: 4.5, style: .continuous))
                 } else {
                     ZStack {
-                        RoundedRectangle(cornerRadius: 5, style: .continuous)
+                        RoundedRectangle(cornerRadius: 4.5, style: .continuous)
                             .fill(music.accentColor.opacity(0.24))
                         Image(systemName: "music.note")
-                            .font(.system(size: 10, weight: .semibold))
+                            .font(.system(size: 9.5, weight: .semibold))
                             .foregroundStyle(music.accentColor)
                     }
-                    .frame(width: 21, height: 21)
+                    .frame(width: 19, height: 19)
                 }
 
                 if audio.isMicMuted {

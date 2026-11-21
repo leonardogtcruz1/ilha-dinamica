@@ -37,6 +37,12 @@ final class SettingsStore: ObservableObject {
         static let recordIncludeMic = "settings.recordIncludeMicV2"
         static let recordShowClicks = "settings.recordShowClicks"
         static let recordAddToShelf = "settings.recordAddToShelf"
+        static let tabOrder = "settings.tabOrder"
+        static let enabledExtraTabs = "settings.enabledExtraTabs"
+        static let layoutPreset = "settings.layoutPreset"
+        static let islandSurfaceTheme = "settings.islandSurfaceTheme"
+        static let buttonAccentColor = "settings.buttonAccentColor"
+        static let sliderAccentColor = "settings.sliderAccentColor"
     }
 
     static let availableSounds: [String] = [
@@ -213,6 +219,42 @@ final class SettingsStore: ObservableObject {
 
     @Published private(set) var launchAtLoginNotice: String?
 
+    @Published var tabOrder: [IslandTab] {
+        didSet {
+            save(tabOrder.map(\.rawValue), forKey: Keys.tabOrder)
+        }
+    }
+
+    @Published var enabledExtraTabs: Set<IslandTab> {
+        didSet {
+            save(enabledExtraTabs.map(\.rawValue).sorted(), forKey: Keys.enabledExtraTabs)
+        }
+    }
+
+    @Published var layoutPreset: IslandLayoutPreset {
+        didSet {
+            save(layoutPreset.rawValue, forKey: Keys.layoutPreset)
+        }
+    }
+
+    @Published var islandSurfaceTheme: IslandSurfaceTheme {
+        didSet {
+            save(islandSurfaceTheme.rawValue, forKey: Keys.islandSurfaceTheme)
+        }
+    }
+
+    @Published var buttonAccentColor: IslandElementColor {
+        didSet {
+            save(buttonAccentColor.rawValue, forKey: Keys.buttonAccentColor)
+        }
+    }
+
+    @Published var sliderAccentColor: IslandElementColor {
+        didSet {
+            save(sliderAccentColor.rawValue, forKey: Keys.sliderAccentColor)
+        }
+    }
+
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
 
@@ -271,7 +313,89 @@ final class SettingsStore: ObservableObject {
             self.launchAtLogin = savedLaunch
         }
 
+        let storedOrder = (defaults.stringArray(forKey: Keys.tabOrder) ?? []).compactMap(IslandTab.init(rawValue:))
+        var normalizedOrder: [IslandTab] = []
+        for tab in storedOrder where !normalizedOrder.contains(tab) {
+            normalizedOrder.append(tab)
+        }
+        for tab in IslandTab.allCases where !normalizedOrder.contains(tab) {
+            normalizedOrder.append(tab)
+        }
+        self.tabOrder = normalizedOrder
+
+        let storedExtra = (defaults.stringArray(forKey: Keys.enabledExtraTabs) ?? []).compactMap(IslandTab.init(rawValue:))
+        self.enabledExtraTabs = Set(storedExtra.filter { !$0.isDefaultEnabled })
+
+        let storedLayout = defaults.string(forKey: Keys.layoutPreset).flatMap(IslandLayoutPreset.init(rawValue:))
+        self.layoutPreset = storedLayout ?? .obsidian
+
+        let storedSurface = defaults.string(forKey: Keys.islandSurfaceTheme).flatMap(IslandSurfaceTheme.init(rawValue:))
+        self.islandSurfaceTheme = storedSurface ?? .presetDefault
+
+        let storedButtonColor = defaults.string(forKey: Keys.buttonAccentColor).flatMap(IslandElementColor.init(rawValue:))
+        self.buttonAccentColor = storedButtonColor ?? .presetDefault
+
+        let storedSliderColor = defaults.string(forKey: Keys.sliderAccentColor).flatMap(IslandElementColor.init(rawValue:))
+        self.sliderAccentColor = storedSliderColor ?? .presetDefault
+
         self.isBootstrapping = false
+    }
+
+    var hasCustomColors: Bool {
+        islandSurfaceTheme != .presetDefault
+            || buttonAccentColor != .presetDefault
+            || sliderAccentColor != .presetDefault
+    }
+
+    func resetCustomColors() {
+        islandSurfaceTheme = .presetDefault
+        buttonAccentColor = .presetDefault
+        sliderAccentColor = .presetDefault
+    }
+
+    var effectiveUsesGlassMaterial: Bool {
+        if islandSurfaceTheme == .presetDefault {
+            return layoutPreset.usesGlassMaterial
+        }
+        return islandSurfaceTheme.usesGlassMaterial
+    }
+
+    var effectiveHasLiquidSheen: Bool {
+        if islandSurfaceTheme == .presetDefault {
+            return layoutPreset.hasLiquidSheen
+        }
+        return islandSurfaceTheme.hasLiquidSheen
+    }
+
+    var effectiveSurfaceTopColor: Color {
+        islandSurfaceTheme.topColor ?? layoutPreset.surfaceTopColor
+    }
+
+    var effectiveSurfaceBottomColor: Color {
+        islandSurfaceTheme.bottomColor ?? layoutPreset.surfaceBottomColor
+    }
+
+    var effectiveRimColors: [Color] {
+        islandSurfaceTheme.rimColors ?? layoutPreset.rimColors
+    }
+
+    var effectiveRimLineWidth: CGFloat {
+        islandSurfaceTheme.rimLineWidth ?? layoutPreset.rimLineWidth
+    }
+
+    func resolvedButtonColor(fallback: Color) -> Color {
+        buttonAccentColor.color ?? fallback
+    }
+
+    func resolvedButtonForeground(fallback: Color) -> Color {
+        if buttonAccentColor == .presetDefault {
+            return fallback
+        }
+        return buttonAccentColor.foregroundOnFill
+    }
+
+    func resolvedSliderColor(fallback: Color) -> Color {
+        sliderAccentColor.color ?? fallback
     }
 
     var effectiveHoverDelayMs: Double {
@@ -313,16 +437,115 @@ final class SettingsStore: ObservableObject {
     }
 
     var enabledTabs: [IslandTab] {
-        var tabs: [IslandTab] = []
-        if enableMusicModule { tabs.append(.music) }
-        if enablePomodoroModule { tabs.append(.pomodoro) }
-        if enableShelfModule { tabs.append(.shelf) }
-        if enableClipboardModule { tabs.append(.clipboard) }
-        if enableCalendarModule { tabs.append(.calendar) }
-        if enableNotesModule { tabs.append(.notes) }
-        if enableAudioModule { tabs.append(.audio) }
-        if enableSystemModule { tabs.append(.system) }
-        return tabs.isEmpty ? [.music] : tabs
+        let tabs = tabOrder.filter { isTabEnabled($0) }
+        if !tabs.isEmpty {
+            return tabs
+        }
+        return [tabOrder.first ?? .music]
+    }
+
+    var disabledTabs: [IslandTab] {
+        tabOrder.filter { !isTabEnabled($0) }
+    }
+
+    var isDefaultWidgetLayout: Bool {
+        enabledTabs == IslandTab.defaultEnabledTabs
+    }
+
+    func isTabEnabled(_ tab: IslandTab) -> Bool {
+        switch tab {
+        case .music: return enableMusicModule
+        case .pomodoro: return enablePomodoroModule
+        case .shelf: return enableShelfModule
+        case .clipboard: return enableClipboardModule
+        case .calendar: return enableCalendarModule
+        case .notes: return enableNotesModule
+        case .audio: return enableAudioModule
+        case .system: return enableSystemModule
+        default: return enabledExtraTabs.contains(tab)
+        }
+    }
+
+    func setTabEnabled(_ tab: IslandTab, enabled: Bool) {
+        if !enabled && isTabEnabled(tab) && enabledTabs.count <= 1 {
+            return
+        }
+        if enabled && !isTabEnabled(tab) {
+            let currentEnabled = enabledTabs
+            var updated = tabOrder.filter { $0 != tab }
+            if let lastEnabled = currentEnabled.last,
+               let lastIdx = updated.firstIndex(of: lastEnabled) {
+                updated.insert(tab, at: lastIdx + 1)
+            } else {
+                updated.append(tab)
+            }
+            tabOrder = updated
+        }
+        switch tab {
+        case .music: enableMusicModule = enabled
+        case .pomodoro: enablePomodoroModule = enabled
+        case .shelf: enableShelfModule = enabled
+        case .clipboard: enableClipboardModule = enabled
+        case .calendar: enableCalendarModule = enabled
+        case .notes: enableNotesModule = enabled
+        case .audio: enableAudioModule = enabled
+        case .system: enableSystemModule = enabled
+        default:
+            if enabled {
+                enabledExtraTabs.insert(tab)
+            } else {
+                enabledExtraTabs.remove(tab)
+            }
+        }
+    }
+
+    func moveEnabledTab(_ tab: IslandTab, toEnabledIndex targetEnabledIndex: Int) {
+        let active = enabledTabs
+        guard let currentEnabledIndex = active.firstIndex(of: tab) else { return }
+        let clampedTarget = max(0, min(active.count - 1, targetEnabledIndex))
+        guard currentEnabledIndex != clampedTarget else { return }
+
+        var newActive = active
+        newActive.remove(at: currentEnabledIndex)
+        newActive.insert(tab, at: clampedTarget)
+
+        var activeIterator = newActive.makeIterator()
+        var updatedOrder: [IslandTab] = []
+        for item in tabOrder {
+            if isTabEnabled(item), let nextActive = activeIterator.next() {
+                updatedOrder.append(nextActive)
+            } else {
+                updatedOrder.append(item)
+            }
+        }
+        if updatedOrder != tabOrder {
+            tabOrder = updatedOrder
+        }
+    }
+
+    func enableAllWidgets() {
+        enableMusicModule = true
+        enablePomodoroModule = true
+        enableShelfModule = true
+        enableClipboardModule = true
+        enableCalendarModule = true
+        enableNotesModule = true
+        enableAudioModule = true
+        enableSystemModule = true
+        enabledExtraTabs = Set(IslandTab.allCases.filter { !$0.isDefaultEnabled })
+    }
+
+    func resetWidgetsToDefault() {
+        tabOrder = IslandTab.allCases
+        enableMusicModule = true
+        enablePomodoroModule = true
+        enableShelfModule = true
+        enableClipboardModule = true
+        enableCalendarModule = true
+        enableNotesModule = true
+        enableAudioModule = true
+        enableSystemModule = true
+        enabledExtraTabs = []
     }
 
     private func save<T>(_ value: T, forKey key: String) {
