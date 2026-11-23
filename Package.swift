@@ -27,7 +27,8 @@ let package = Package(
                 .linkedFramework("CoreMedia"),
                 .linkedFramework("CoreVideo"),
                 .linkedFramework("ScreenCaptureKit"),
-                .linkedFramework("EventKit")
+                .linkedFramework("EventKit"),
+                .linkedFramework("Carbon")
             ]
         )
     ]

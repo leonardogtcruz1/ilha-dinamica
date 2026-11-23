@@ -1,4 +1,5 @@
 import AppKit
+import Carbon
 import SwiftUI
 
 @MainActor
@@ -24,6 +25,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     private var settingsWindow: NSWindow?
     private var screenObserver: NSObjectProtocol?
     private var activityToken: NSObjectProtocol?
+    private var globalHideHotKey: GlobalHideHotKey?
 
     override init() {
         let settings = SettingsStore()
@@ -91,6 +93,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         setupIslandPanel()
         observeScreenChanges()
         presentInitialPeek()
+        globalHideHotKey = GlobalHideHotKey { [weak self] in
+            Task { @MainActor [weak self] in
+                self?.coordinator.toggleTemporaryHide()
+            }
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -98,6 +105,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             ProcessInfo.processInfo.endActivity(token)
             activityToken = nil
         }
+        globalHideHotKey?.unregister()
+        globalHideHotKey = nil
         mediaKeys.disable()
         extraWidgets.stopScreenClean()
         extraWidgets.disableCaffeine()
@@ -346,6 +355,77 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             try? await Task.sleep(nanoseconds: 250_000_000)
             guard let self else { return }
             self.coordinator.presentBriefPeek(tab: self.settings.enabledTabs.first, duration: 2.2)
+        }
+    }
+}
+
+private final class GlobalHideHotKey {
+    private var hotKeyRef: EventHotKeyRef?
+    private var handlerRef: EventHandlerRef?
+    private let handler: () -> Void
+
+    init?(handler: @escaping () -> Void) {
+        self.handler = handler
+        var eventType = EventTypeSpec(
+            eventClass: OSType(kEventClassKeyboard),
+            eventKind: UInt32(kEventHotKeyPressed)
+        )
+        let selfPtr = Unmanaged.passUnretained(self).toOpaque()
+        let installStatus = InstallEventHandler(
+            GetApplicationEventTarget(),
+            { _, event, userData -> OSStatus in
+                guard let userData, let event else { return OSStatus(eventNotHandledErr) }
+                var hotKeyID = EventHotKeyID()
+                let status = GetEventParameter(
+                    event,
+                    EventParamName(kEventParamDirectObject),
+                    EventParamType(typeEventHotKeyID),
+                    nil,
+                    MemoryLayout<EventHotKeyID>.size,
+                    nil,
+                    &hotKeyID
+                )
+                guard status == noErr, hotKeyID.signature == 0x494C4841, hotKeyID.id == 1 else {
+                    return OSStatus(eventNotHandledErr)
+                }
+                let instance = Unmanaged<GlobalHideHotKey>.fromOpaque(userData).takeUnretainedValue()
+                instance.handler()
+                return noErr
+            },
+            1,
+            &eventType,
+            selfPtr,
+            &handlerRef
+        )
+        guard installStatus == noErr else { return nil }
+
+        let hotKeyID = EventHotKeyID(signature: 0x494C4841, id: 1)
+        let regStatus = RegisterEventHotKey(
+            UInt32(kVK_ANSI_H),
+            UInt32(controlKey | optionKey),
+            hotKeyID,
+            GetApplicationEventTarget(),
+            0,
+            &hotKeyRef
+        )
+        guard regStatus == noErr else {
+            unregister()
+            return nil
+        }
+    }
+
+    deinit {
+        unregister()
+    }
+
+    func unregister() {
+        if let hotKeyRef {
+            UnregisterEventHotKey(hotKeyRef)
+            self.hotKeyRef = nil
+        }
+        if let handlerRef {
+            RemoveEventHandler(handlerRef)
+            self.handlerRef = nil
         }
     }
 }

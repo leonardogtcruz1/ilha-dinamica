@@ -14,6 +14,10 @@ struct MusicExpandedView: View {
         return max(0, min(1, displayedElapsed / music.duration))
     }
 
+    private var resolvedSourceName: String {
+        music.sourceDisplayName.isEmpty ? music.player.displayName : music.sourceDisplayName
+    }
+
     var body: some View {
         Group {
             if music.hasTrack {
@@ -56,7 +60,7 @@ struct MusicExpandedView: View {
                             ZStack {
                                 RoundedRectangle(cornerRadius: corner, style: .continuous)
                                     .fill(music.accentColor.opacity(0.22))
-                                Image(systemName: "music.note")
+                                Image(systemName: music.player.fallbackSymbolName)
                                     .font(.system(size: max(26, artSize * 0.32), weight: .semibold))
                                     .foregroundStyle(music.accentColor)
                             }
@@ -65,7 +69,7 @@ struct MusicExpandedView: View {
                     }
                 }
                 .buttonStyle(.plain)
-                .help("Abrir \(music.player.displayName)")
+                .help("Abrir \(resolvedSourceName)")
 
                 VStack(alignment: .leading, spacing: 0) {
                     HStack(alignment: .top, spacing: 8) {
@@ -85,9 +89,10 @@ struct MusicExpandedView: View {
                         HStack(spacing: 6) {
                             let badgeTint = settings.resolvedButtonColor(fallback: music.accentColor)
                             let barTint = settings.resolvedSliderColor(fallback: music.accentColor)
-                            Text(music.player.displayName)
+                            Text(resolvedSourceName)
                                 .font(.system(size: 10, weight: .semibold))
                                 .foregroundStyle(badgeTint)
+                                .lineLimit(1)
                                 .padding(.horizontal, 7)
                                 .padding(.vertical, 3)
                                 .background(badgeTint.opacity(0.15), in: Capsule())
@@ -111,9 +116,16 @@ struct MusicExpandedView: View {
                         scrubBar
 
                         HStack {
-                            Text(formatTime(displayedElapsed))
-                            Spacer()
-                            Text(formatTime(music.duration))
+                            if music.duration > 0 {
+                                Text(formatTime(displayedElapsed))
+                                Spacer()
+                                Text(formatTime(music.duration))
+                            } else {
+                                Text(music.isPlaying ? "Reproduzindo" : "Pausado")
+                                Spacer()
+                                Text(resolvedSourceName)
+                                    .lineLimit(1)
+                            }
                         }
                         .font(.system(size: 10, weight: .medium, design: .rounded).monospacedDigit())
                         .foregroundStyle(Color.white.opacity(0.48))
@@ -134,6 +146,8 @@ struct MusicExpandedView: View {
                                 .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
+                        .disabled(music.duration <= 0)
+                        .opacity(music.duration > 0 ? 1.0 : 0.32)
 
                         Button {
                             music.previousTrack()
@@ -185,6 +199,8 @@ struct MusicExpandedView: View {
                                 .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
+                        .disabled(music.duration <= 0)
+                        .opacity(music.duration > 0 ? 1.0 : 0.32)
 
                         Spacer(minLength: 0)
                     }
@@ -199,7 +215,9 @@ struct MusicExpandedView: View {
     private var scrubBar: some View {
         GeometryReader { geo in
             let width = max(1, geo.size.width)
-            let barHeight: CGFloat = (music.isHoveringTrack || music.isScrubbing) ? 6 : 4
+            let canScrub = music.duration > 0
+            let fillFraction = canScrub ? progressFraction : (music.isPlaying ? 0.38 : 0.0)
+            let barHeight: CGFloat = (canScrub && (music.isHoveringTrack || music.isScrubbing)) ? 6 : 4
 
             ZStack(alignment: .leading) {
                 Capsule(style: .continuous)
@@ -208,9 +226,9 @@ struct MusicExpandedView: View {
 
                 Capsule(style: .continuous)
                     .fill(settings.resolvedSliderColor(fallback: music.accentColor))
-                    .frame(width: width * CGFloat(progressFraction), height: barHeight)
+                    .frame(width: width * CGFloat(fillFraction), height: barHeight)
 
-                if music.isHoveringTrack || music.isScrubbing {
+                if canScrub && (music.isHoveringTrack || music.isScrubbing) {
                     Circle()
                         .fill(.white)
                         .frame(width: 10, height: 10)
@@ -220,6 +238,10 @@ struct MusicExpandedView: View {
             .frame(height: 14)
             .contentShape(Rectangle())
             .onHover { hovering in
+                guard canScrub else {
+                    music.isHoveringTrack = false
+                    return
+                }
                 withAnimation(.easeInOut(duration: 0.14)) {
                     music.isHoveringTrack = hovering
                 }
@@ -260,10 +282,10 @@ struct MusicExpandedView: View {
                 .frame(width: 48, height: 48)
 
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("Nenhuma música tocando")
+                    Text("Nenhuma mídia tocando")
                         .font(.system(size: 13.5, weight: .semibold))
                         .foregroundStyle(.white)
-                    Text("Inicie uma faixa no Spotify ou Apple Music para controlar pela ilha.")
+                    Text("Inicie uma música ou vídeo no Spotify, Apple Music, YouTube ou navegador.")
                         .font(.system(size: 11.5))
                         .foregroundStyle(Color.white.opacity(0.58))
                         .lineLimit(2)

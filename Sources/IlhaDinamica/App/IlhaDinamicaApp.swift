@@ -6,7 +6,7 @@ struct IlhaDinamicaApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     var body: some Scene {
-        MenuBarExtra("Ilha Dinâmica", systemImage: "capsule.inset.filled") {
+        MenuBarExtra {
             MenuBarContentView(
                 coordinator: appDelegate.coordinator,
                 music: appDelegate.music,
@@ -16,7 +16,18 @@ struct IlhaDinamicaApp: App {
                 recorder: appDelegate.recorder,
                 openSettings: { appDelegate.openSettingsWindow() }
             )
+        } label: {
+            MenuBarLabelView(coordinator: appDelegate.coordinator)
         }
+    }
+}
+
+private struct MenuBarLabelView: View {
+    @ObservedObject var coordinator: IslandCoordinator
+
+    var body: some View {
+        Image(systemName: coordinator.isTemporarilyHidden ? "eye.slash" : "capsule.inset.filled")
+            .accessibilityLabel("Ilha Dinâmica")
     }
 }
 
@@ -30,6 +41,28 @@ private struct MenuBarContentView: View {
     let openSettings: () -> Void
 
     var body: some View {
+        if coordinator.isTemporarilyHidden {
+            let showTitle = coordinator.hiddenResumeTimeText.map { "Mostrar Ilha (volta às \($0))" } ?? "Mostrar Ilha"
+            Button(showTitle) {
+                coordinator.showFromTemporaryHide()
+            }
+            .keyboardShortcut("h", modifiers: [.control, .option])
+        } else {
+            Button("Ocultar Ilha") {
+                coordinator.hideTemporarily()
+            }
+            .keyboardShortcut("h", modifiers: [.control, .option])
+
+            Menu("Ocultar por tempo…") {
+                Button("1 minuto") { coordinator.hideTemporarily(for: 60) }
+                Button("5 minutos") { coordinator.hideTemporarily(for: 300) }
+                Button("15 minutos") { coordinator.hideTemporarily(for: 900) }
+                Button("1 hora") { coordinator.hideTemporarily(for: 3600) }
+            }
+        }
+
+        Divider()
+
         Button(coordinator.mode == .expanded ? "Recolher Ilha" : "Expandir Ilha") {
             coordinator.toggleExpanded()
         }

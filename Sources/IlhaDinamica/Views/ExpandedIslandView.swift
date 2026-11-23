@@ -578,7 +578,7 @@ struct ExpandedIslandView: View {
     }
 
     private var headerRightActionButtons: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 3) {
                 Button {
                     if recorder.isRecording {
                         recorder.stopRecording()
@@ -595,13 +595,13 @@ struct ExpandedIslandView: View {
                     }
                 } label: {
                     Image(systemName: recorder.isRecording ? "stop.circle.fill" : "record.circle")
-                        .font(.system(size: 10, weight: .semibold))
+                        .font(.system(size: 9.5, weight: .semibold))
                         .foregroundStyle(
                             recorder.isRecording
                                 ? Color.white
                                 : Color(red: 1.0, green: 0.28, blue: 0.26)
                         )
-                        .frame(width: 20, height: 20)
+                        .frame(width: 18.5, height: 18.5)
                         .background(
                             recorder.isRecording
                                 ? Color(red: 1.0, green: 0.24, blue: 0.22)
@@ -617,13 +617,13 @@ struct ExpandedIslandView: View {
                 } label: {
                     let activeColor = settings.resolvedButtonColor(fallback: Color(red: 0.36, green: 0.76, blue: 1.0))
                     Image(systemName: "square.grid.2x2.fill")
-                        .font(.system(size: 9, weight: .semibold))
+                        .font(.system(size: 8.5, weight: .semibold))
                         .foregroundStyle(
                             coordinator.isEditingWidgets
                                 ? activeColor
                                 : Color.white.opacity(0.66)
                         )
-                        .frame(width: 20, height: 20)
+                        .frame(width: 18.5, height: 18.5)
                         .background(
                             coordinator.isEditingWidgets
                                 ? activeColor.opacity(0.22)
@@ -639,13 +639,13 @@ struct ExpandedIslandView: View {
                 } label: {
                     let paletteTint = settings.resolvedButtonColor(fallback: settings.layoutPreset.accentColor)
                     Image(systemName: "paintpalette.fill")
-                        .font(.system(size: 9, weight: .semibold))
+                        .font(.system(size: 8.5, weight: .semibold))
                         .foregroundStyle(
                             (coordinator.isPresetsOpen || settings.hasCustomColors)
                                 ? paletteTint
                                 : Color.white.opacity(0.66)
                         )
-                        .frame(width: 20, height: 20)
+                        .frame(width: 18.5, height: 18.5)
                         .background(
                             coordinator.isPresetsOpen
                                 ? paletteTint.opacity(0.22)
@@ -661,9 +661,9 @@ struct ExpandedIslandView: View {
                 } label: {
                     let mirrorTint = settings.resolvedButtonColor(fallback: Color(red: 0.36, green: 0.76, blue: 1.0))
                     Image(systemName: "camera.fill")
-                        .font(.system(size: 9, weight: .semibold))
+                        .font(.system(size: 8.5, weight: .semibold))
                         .foregroundStyle(coordinator.isMirrorOpen ? mirrorTint : Color.white.opacity(0.66))
-                        .frame(width: 20, height: 20)
+                        .frame(width: 18.5, height: 18.5)
                         .background(
                             coordinator.isMirrorOpen ? mirrorTint.opacity(0.20) : Color.white.opacity(0.07),
                             in: Circle()
@@ -676,9 +676,9 @@ struct ExpandedIslandView: View {
                     coordinator.togglePin()
                 } label: {
                     Image(systemName: coordinator.isPinned ? "pin.fill" : "pin")
-                        .font(.system(size: 9.5, weight: .semibold))
+                        .font(.system(size: 9, weight: .semibold))
                         .foregroundStyle(coordinator.isPinned ? Color.yellow : Color.white.opacity(0.62))
-                        .frame(width: 20, height: 20)
+                        .frame(width: 18.5, height: 18.5)
                         .background(
                             coordinator.isPinned ? Color.yellow.opacity(0.18) : Color.white.opacity(0.07),
                             in: Circle()
@@ -688,12 +688,32 @@ struct ExpandedIslandView: View {
                 .help(coordinator.isPinned ? "Desafixar ilha" : "Fixar ilha aberta")
 
                 Button {
+                    coordinator.hideTemporarily()
+                } label: {
+                    Image(systemName: "eye.slash")
+                        .font(.system(size: 8.5, weight: .semibold))
+                        .foregroundStyle(Color.white.opacity(0.66))
+                        .frame(width: 18.5, height: 18.5)
+                        .background(Color.white.opacity(0.07), in: Circle())
+                }
+                .buttonStyle(.plain)
+                .help("Ocultar ilha temporariamente (⌃⌥H)")
+                .contextMenu {
+                    Button("Ocultar até mostrar (⌃⌥H)") { coordinator.hideTemporarily() }
+                    Divider()
+                    Button("Ocultar por 1 minuto") { coordinator.hideTemporarily(for: 60) }
+                    Button("Ocultar por 5 minutos") { coordinator.hideTemporarily(for: 300) }
+                    Button("Ocultar por 15 minutos") { coordinator.hideTemporarily(for: 900) }
+                    Button("Ocultar por 1 hora") { coordinator.hideTemporarily(for: 3600) }
+                }
+
+                Button {
                     coordinator.openSettings()
                 } label: {
                     Image(systemName: "gearshape.fill")
-                        .font(.system(size: 9.5, weight: .semibold))
+                        .font(.system(size: 9, weight: .semibold))
                         .foregroundStyle(Color.white.opacity(0.66))
-                        .frame(width: 20, height: 20)
+                        .frame(width: 18.5, height: 18.5)
                         .background(Color.white.opacity(0.07), in: Circle())
                 }
                 .buttonStyle(.plain)

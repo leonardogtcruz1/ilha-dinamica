@@ -97,14 +97,15 @@ struct PresetHomeDashboardView: View {
                                     )
                                 }
 
-                                Text(music.artist.isEmpty ? music.player.displayName : music.artist)
+                                Text(music.artist.isEmpty ? (music.sourceDisplayName.isEmpty ? music.player.displayName : music.sourceDisplayName) : music.artist)
                                     .font(.system(size: 12, weight: .medium))
                                     .foregroundStyle(Color.white.opacity(0.84))
                                     .lineLimit(1)
 
-                                Text(music.player.displayName)
+                                Text(music.sourceDisplayName.isEmpty ? music.player.displayName : music.sourceDisplayName)
                                     .font(.system(size: 10, weight: .semibold))
                                     .foregroundStyle(sliderTint)
+                                    .lineLimit(1)
                                     .padding(.horizontal, 6)
                                     .padding(.vertical, 2)
                                     .background(sliderTint.opacity(0.16), in: Capsule())
@@ -249,12 +250,12 @@ struct PresetHomeDashboardView: View {
                                     )
                                 }
 
-                                Text(music.artist.isEmpty ? music.player.displayName : music.artist)
+                                Text(music.artist.isEmpty ? (music.sourceDisplayName.isEmpty ? music.player.displayName : music.sourceDisplayName) : music.artist)
                                     .font(.system(size: 11.5, weight: .medium))
                                     .foregroundStyle(sliderTint)
                                     .lineLimit(1)
 
-                                Text(music.album.isEmpty ? music.player.displayName : music.album)
+                                Text(music.album.isEmpty ? (music.sourceDisplayName.isEmpty ? music.player.displayName : music.sourceDisplayName) : music.album)
                                     .font(.system(size: 10, weight: .medium))
                                     .foregroundStyle(Color.white.opacity(0.50))
                                     .lineLimit(1)
@@ -659,7 +660,7 @@ struct PresetHomeDashboardView: View {
                                 .font(.system(size: 12, weight: .bold))
                                 .foregroundStyle(.white)
                                 .lineLimit(1)
-                            Text(music.artist.isEmpty ? music.player.displayName : music.artist)
+                            Text(music.artist.isEmpty ? (music.sourceDisplayName.isEmpty ? music.player.displayName : music.sourceDisplayName) : music.artist)
                                 .font(.system(size: 10, weight: .medium))
                                 .foregroundStyle(sliderTint)
                                 .lineLimit(1)
@@ -1096,7 +1097,7 @@ struct PresetHomeDashboardView: View {
                         superIslandEmptyState(
                             icon: "music.note.house",
                             title: "Nada tocando",
-                            subtitle: "Inicie no Spotify ou Apple Music"
+                            subtitle: "Inicie música ou vídeo no Spotify, Apple Music ou YouTube"
                         )
                         HStack(spacing: 6) {
                             Spacer()
@@ -1158,13 +1159,13 @@ struct PresetHomeDashboardView: View {
                                         .fill(Color.white.opacity(0.08))
                                         .frame(width: artSize, height: artSize)
                                         .overlay(
-                                            Image(systemName: "music.note")
+                                            Image(systemName: music.player.fallbackSymbolName)
                                                 .font(.system(size: max(20, artSize * 0.28), weight: .medium))
                                                 .foregroundStyle(Color.white.opacity(0.65))
                                         )
                                 }
 
-                                if let bundleID = music.player.bundleIdentifier,
+                                if let bundleID = music.sourceBundleIdentifier ?? music.player.bundleIdentifier,
                                    let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
                                     Image(nsImage: NSWorkspace.shared.icon(forFile: appURL.path))
                                         .resizable()
@@ -1198,6 +1199,8 @@ struct PresetHomeDashboardView: View {
                     Spacer(minLength: 4)
 
                     VStack(alignment: .leading, spacing: 4) {
+                        let canScrub = music.duration > 0
+                        let fillFraction = canScrub ? progress : (music.isPlaying ? 0.36 : 0.0)
                         GeometryReader { geo in
                             let w = max(1, geo.size.width)
                             ZStack(alignment: .leading) {
@@ -1206,11 +1209,13 @@ struct PresetHomeDashboardView: View {
                                     .frame(height: 3)
                                 Capsule(style: .continuous)
                                     .fill(sliderTint)
-                                    .frame(width: w * CGFloat(progress), height: 3)
-                                Circle()
-                                    .fill(settings.sliderAccentColor == .presetDefault ? Color.white : sliderTint)
-                                    .frame(width: 7.5, height: 7.5)
-                                    .offset(x: max(0, min(w - 7.5, w * CGFloat(progress) - 3.75)))
+                                    .frame(width: w * CGFloat(fillFraction), height: 3)
+                                if canScrub {
+                                    Circle()
+                                        .fill(settings.sliderAccentColor == .presetDefault ? Color.white : sliderTint)
+                                        .frame(width: 7.5, height: 7.5)
+                                        .offset(x: max(0, min(w - 7.5, w * CGFloat(progress) - 3.75)))
+                                }
                             }
                             .frame(height: 12)
                             .contentShape(Rectangle())
@@ -1219,9 +1224,15 @@ struct PresetHomeDashboardView: View {
                         .frame(height: 12)
 
                         HStack {
-                            Text(formatTrackTime(displayedElapsed))
-                            Spacer(minLength: 8)
-                            Text(formatTrackTime(music.duration))
+                            if canScrub {
+                                Text(formatTrackTime(displayedElapsed))
+                                Spacer(minLength: 8)
+                                Text(formatTrackTime(music.duration))
+                            } else {
+                                Text(music.isPlaying ? "Reproduzindo" : "Pausado")
+                                Spacer(minLength: 8)
+                                Text(music.sourceDisplayName.isEmpty ? music.player.displayName : music.sourceDisplayName)
+                            }
                         }
                         .font(.system(size: 10, weight: .medium, design: .monospaced))
                         .foregroundStyle(Color.white.opacity(0.36))
@@ -1502,7 +1513,7 @@ struct PresetHomeDashboardView: View {
                                 .foregroundStyle(.white)
                                 .lineLimit(1)
 
-                            Text("Inicie uma faixa no Spotify ou Apple Music")
+                            Text("Inicie música ou vídeo no Spotify, Apple Music ou YouTube")
                                 .font(.system(size: 11, weight: .regular))
                                 .foregroundStyle(Color.white.opacity(0.50))
                                 .lineLimit(2)
@@ -1551,7 +1562,7 @@ struct PresetHomeDashboardView: View {
                                     .foregroundStyle(.white)
                                     .lineLimit(1)
 
-                                Text(music.artist.isEmpty ? music.player.displayName : music.artist)
+                                Text(music.artist.isEmpty ? (music.sourceDisplayName.isEmpty ? music.player.displayName : music.sourceDisplayName) : music.artist)
                                     .font(.system(size: 12, weight: .medium))
                                     .foregroundStyle(sliderTint)
                                     .lineLimit(1)
@@ -1750,7 +1761,7 @@ struct PresetHomeDashboardView: View {
                                         Rectangle()
                                             .fill(Color.white.opacity(0.14))
                                             .overlay(
-                                                Image(systemName: "music.note")
+                                                Image(systemName: music.player.fallbackSymbolName)
                                                     .font(.system(size: max(20, artSize * 0.34), weight: .semibold))
                                                     .foregroundStyle(.white)
                                             )
@@ -1765,7 +1776,7 @@ struct PresetHomeDashboardView: View {
                                 .shadow(color: Color.black.opacity(0.25), radius: 6, y: 3)
                             }
                             .buttonStyle(.plain)
-                            .help("Abrir player de música")
+                            .help("Abrir \(music.sourceDisplayName.isEmpty ? music.player.displayName : music.sourceDisplayName)")
 
                             VStack(alignment: .leading, spacing: 1.5) {
                                 Text(music.title)
@@ -1774,7 +1785,7 @@ struct PresetHomeDashboardView: View {
                                     .lineLimit(1)
                                     .shadow(color: .black.opacity(0.28), radius: 2, y: 1)
 
-                                Text(music.artist.isEmpty ? music.player.displayName : music.artist)
+                                Text(music.artist.isEmpty ? (music.sourceDisplayName.isEmpty ? music.player.displayName : music.sourceDisplayName) : music.artist)
                                     .font(.system(size: 13, weight: .medium))
                                     .foregroundStyle(Color.white.opacity(0.84))
                                     .lineLimit(1)
@@ -1782,7 +1793,7 @@ struct PresetHomeDashboardView: View {
                                 HStack(spacing: 4) {
                                     Image(systemName: "waveform")
                                         .font(.system(size: 9.5, weight: .semibold))
-                                    Text(music.player.displayName)
+                                    Text(music.sourceDisplayName.isEmpty ? music.player.displayName : music.sourceDisplayName)
                                         .font(.system(size: 10.5, weight: .medium))
                                         .lineLimit(1)
                                 }
@@ -1803,11 +1814,14 @@ struct PresetHomeDashboardView: View {
 
                         Spacer(minLength: 6)
 
+                        let canScrub = music.duration > 0
+                        let fillFraction = canScrub ? progress : (music.isPlaying ? 0.36 : 0.0)
                         HStack(spacing: 10) {
-                            Text(formatTrackTime(displayedElapsed))
+                            Text(canScrub ? formatTrackTime(displayedElapsed) : (music.isPlaying ? "Reproduzindo" : "Pausado"))
                                 .font(.system(size: 11.5, weight: .medium, design: .rounded).monospacedDigit())
                                 .foregroundStyle(Color.white.opacity(0.84))
-                                .frame(width: 38, alignment: .leading)
+                                .lineLimit(1)
+                                .frame(width: canScrub ? 38 : nil, alignment: .leading)
 
                             GeometryReader { geo in
                                 let w = max(1, geo.size.width)
@@ -1818,7 +1832,7 @@ struct PresetHomeDashboardView: View {
 
                                     Capsule(style: .continuous)
                                         .fill(sliderTint)
-                                        .frame(width: progress > 0 ? max(5.5, w * CGFloat(progress)) : 0, height: 5.5)
+                                        .frame(width: fillFraction > 0 ? max(5.5, w * CGFloat(fillFraction)) : 0, height: 5.5)
                                 }
                                 .frame(height: 14)
                                 .contentShape(Rectangle())
@@ -1826,10 +1840,11 @@ struct PresetHomeDashboardView: View {
                             }
                             .frame(height: 14)
 
-                            Text(formatTrackTime(music.duration))
+                            Text(canScrub ? formatTrackTime(music.duration) : (music.sourceDisplayName.isEmpty ? music.player.displayName : music.sourceDisplayName))
                                 .font(.system(size: 11.5, weight: .medium, design: .rounded).monospacedDigit())
                                 .foregroundStyle(Color.white.opacity(0.84))
-                                .frame(width: 38, alignment: .trailing)
+                                .lineLimit(1)
+                                .frame(width: canScrub ? 38 : nil, alignment: .trailing)
                         }
 
                         Spacer(minLength: 6)
@@ -2032,7 +2047,7 @@ struct PresetHomeDashboardView: View {
                         Rectangle()
                             .fill(glowTint.opacity(0.24))
                             .overlay(
-                                Image(systemName: "music.note")
+                                Image(systemName: music.player.fallbackSymbolName)
                                     .font(.system(size: size * 0.28, weight: .semibold))
                                     .foregroundStyle(glowTint)
                             )
@@ -2051,7 +2066,7 @@ struct PresetHomeDashboardView: View {
                 .scaleEffect(music.isPlaying ? 1.0 : pauseScale)
 
                 if showAppBadge,
-                   let bundleID = music.player.bundleIdentifier,
+                   let bundleID = music.sourceBundleIdentifier ?? music.player.bundleIdentifier,
                    let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
                     let badgeSize = max(18, size * 0.26)
                     Image(nsImage: NSWorkspace.shared.icon(forFile: appURL.path))
@@ -2148,7 +2163,9 @@ struct PresetHomeDashboardView: View {
         showTimestamps: Bool
     ) -> some View {
         let displayedElapsed = music.isScrubbing ? music.scrubSeconds : music.elapsedTime
-        let progress = music.duration > 0 ? max(0, min(1, displayedElapsed / music.duration)) : 0
+        let canScrub = music.duration > 0
+        let progress = canScrub ? max(0, min(1, displayedElapsed / music.duration)) : 0
+        let fillFraction = canScrub ? progress : (music.isPlaying ? 0.36 : 0.0)
 
         return VStack(spacing: 3.5) {
             GeometryReader { geo in
@@ -2160,9 +2177,9 @@ struct PresetHomeDashboardView: View {
 
                     Capsule(style: .continuous)
                         .fill(tint)
-                        .frame(width: progress > 0 ? max(trackHeight, w * CGFloat(progress)) : 0, height: trackHeight)
+                        .frame(width: fillFraction > 0 ? max(trackHeight, w * CGFloat(fillFraction)) : 0, height: trackHeight)
 
-                    if showKnob {
+                    if canScrub && showKnob {
                         Circle()
                             .fill(Color.white)
                             .frame(width: trackHeight + 3.5, height: trackHeight + 3.5)
@@ -2177,9 +2194,15 @@ struct PresetHomeDashboardView: View {
 
             if showTimestamps {
                 HStack {
-                    Text(formatTrackTime(displayedElapsed))
-                    Spacer(minLength: 8)
-                    Text(formatTrackTime(music.duration))
+                    if canScrub {
+                        Text(formatTrackTime(displayedElapsed))
+                        Spacer(minLength: 8)
+                        Text(formatTrackTime(music.duration))
+                    } else {
+                        Text(music.isPlaying ? "Reproduzindo" : "Pausado")
+                        Spacer(minLength: 8)
+                        Text(music.sourceDisplayName.isEmpty ? music.player.displayName : music.sourceDisplayName)
+                    }
                 }
                 .font(.system(size: 9.5, weight: .medium, design: .rounded).monospacedDigit())
                 .foregroundStyle(Color.white.opacity(0.48))

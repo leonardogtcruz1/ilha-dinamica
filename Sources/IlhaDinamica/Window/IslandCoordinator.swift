@@ -27,6 +27,8 @@ final class IslandCoordinator: ObservableObject {
     @Published var isShowingPresetHome: Bool = false {
         didSet { syncPanelKeyFocus() }
     }
+    @Published private(set) var isTemporarilyHidden: Bool = false
+    @Published private(set) var hiddenUntil: Date? = nil
     @Published var draggingWidgetTab: IslandTab? = nil
     @Published var draggingWidgetInitialIndex: Int = 0
     @Published var draggingWidgetTranslation: CGSize = .zero
@@ -56,6 +58,7 @@ final class IslandCoordinator: ObservableObject {
     private var hoverCollapseTask: Task<Void, Never>?
     private var toastDismissTask: Task<Void, Never>?
     private var reattachTask: Task<Void, Never>?
+    private var unhideTask: Task<Void, Never>?
     private var cancellables = Set<AnyCancellable>()
     private var wasMouseInside = false
     private var wasInteractingInside = false
@@ -114,6 +117,7 @@ final class IslandCoordinator: ObservableObject {
         hoverCollapseTask?.cancel()
         toastDismissTask?.cancel()
         reattachTask?.cancel()
+        unhideTask?.cancel()
     }
 
     var currentSize: CGSize {
@@ -199,7 +203,8 @@ final class IslandCoordinator: ObservableObject {
     }
 
     func isPointInsideIsland(_ point: CGPoint = NSEvent.mouseLocation) -> Bool {
-        activeScreenRect().contains(point)
+        guard !isTemporarilyHidden else { return false }
+        return activeScreenRect().contains(point)
     }
 
     func updateGeometry() {
@@ -211,6 +216,7 @@ final class IslandCoordinator: ObservableObject {
     }
 
     func expand(tab: IslandTab? = nil) {
+        guard !isTemporarilyHidden else { return }
         hoverExpandTask?.cancel()
         hoverExpandTask = nil
         hoverCollapseTask?.cancel()
@@ -251,6 +257,7 @@ final class IslandCoordinator: ObservableObject {
     }
 
     func presentBriefPeek(tab: IslandTab?, duration: TimeInterval) {
+        guard !isTemporarilyHidden else { return }
         expand(tab: tab)
         guard !wasMouseInside, !isPinned else { return }
         scheduleHoverCollapse(after: duration, keepOpenIfWeather: true)
@@ -319,7 +326,100 @@ final class IslandCoordinator: ObservableObject {
         }
     }
 
+    var hiddenResumeTimeText: String? {
+        guard let hiddenUntil else { return nil }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm"
+        return formatter.string(from: hiddenUntil)
+    }
+
+    func toggleTemporaryHide() {
+        if isTemporarilyHidden {
+            showFromTemporaryHide()
+        } else {
+            hideTemporarily()
+        }
+    }
+
+    func hideTemporarily(for duration: TimeInterval? = nil) {
+        hoverExpandTask?.cancel()
+        hoverExpandTask = nil
+        hoverCollapseTask?.cancel()
+        hoverCollapseTask = nil
+        toastDismissTask?.cancel()
+        toastDismissTask = nil
+        reattachTask?.cancel()
+        reattachTask = nil
+        unhideTask?.cancel()
+        unhideTask = nil
+
+        isPinned = false
+        isMirrorOpen = false
+        isWeatherOpen = false
+        isEditingWidgets = false
+        isPresetsOpen = false
+        draggingWidgetTab = nil
+        draggingWidgetInitialIndex = 0
+        draggingWidgetTranslation = .zero
+        wasMouseInside = false
+        wasInteractingInside = false
+        suppressHoverExpandUntilExit = false
+        camera.stop()
+
+        isTemporarilyHidden = true
+        hiddenUntil = duration.map { Date().addingTimeInterval($0) }
+        mode = restingMode
+
+        if let panel {
+            panel.allowsKeyFocus = false
+            if panel.isKeyWindow {
+                panel.resignKey()
+            }
+            panel.ignoresMouseEvents = true
+            OverlaySpaceManager.shared.detach(window: panel)
+            OverlaySpaceManager.shared.resetActiveSpaceMenuBar()
+            panel.orderOut(nil)
+            isDetachedForDrag = false
+        }
+
+        if let duration {
+            let seconds = max(1.0, duration)
+            unhideTask = Task { [weak self] in
+                try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+                guard !Task.isCancelled, let self else { return }
+                self.unhideTask = nil
+                if self.isTemporarilyHidden {
+                    self.showFromTemporaryHide()
+                }
+            }
+        }
+    }
+
+    func showFromTemporaryHide() {
+        unhideTask?.cancel()
+        unhideTask = nil
+        guard isTemporarilyHidden else { return }
+
+        hiddenUntil = nil
+        isTemporarilyHidden = false
+        wasMouseInside = false
+        suppressHoverExpandUntilExit = false
+        syncRestingMode(animated: false)
+
+        if let panel {
+            panel.level = IslandPanel.overlayLevel
+            panel.updateFrame(for: geometry)
+            panel.orderFrontRegardless()
+            OverlaySpaceManager.shared.attach(window: panel)
+        }
+    }
+
     func toggleExpanded() {
+        if isTemporarilyHidden {
+            showFromTemporaryHide()
+            expand(tab: settings.layoutPreset.hasHomeDashboard ? nil : smartDefaultTab())
+            return
+        }
         if mode == .expanded {
             collapse()
         } else {
@@ -328,6 +428,12 @@ final class IslandCoordinator: ObservableObject {
     }
 
     func togglePin() {
+        if isTemporarilyHidden {
+            showFromTemporaryHide()
+            isPinned = true
+            expand()
+            return
+        }
         isPinned.toggle()
         if isPinned && mode != .expanded {
             expand()
@@ -335,6 +441,9 @@ final class IslandCoordinator: ObservableObject {
     }
 
     func toggleMirror() {
+        if isTemporarilyHidden {
+            showFromTemporaryHide()
+        }
         if isMirrorOpen {
             isMirrorOpen = false
             camera.stop()
@@ -497,6 +606,7 @@ final class IslandCoordinator: ObservableObject {
     }
 
     func showToast(_ event: ToastEvent, duration: TimeInterval? = nil) {
+        guard !isTemporarilyHidden else { return }
         if case .expanded = mode {
             return
         }
@@ -701,7 +811,7 @@ final class IslandCoordinator: ObservableObject {
     }
 
     private func evaluateMousePosition() {
-        guard let panel else { return }
+        guard let panel, !isTemporarilyHidden else { return }
 
         let mouse = NSEvent.mouseLocation
         let hitRect = activeScreenRect()
@@ -825,7 +935,7 @@ final class IslandCoordinator: ObservableObject {
     }
 
     func ensureDragSafeLayer() {
-        guard let panel else { return }
+        guard let panel, !isTemporarilyHidden else { return }
         reattachTask?.cancel()
         reattachTask = nil
         if !isDetachedForDrag {
