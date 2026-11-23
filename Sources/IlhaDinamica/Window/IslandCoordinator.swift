@@ -149,11 +149,17 @@ final class IslandCoordinator: ObservableObject {
                     return CGSize(width: 416, height: 86)
                 }
             }
-            if case .bluetoothConnected = event.kind {
-                return CGSize(
-                    width: max(geometry.notchWidth + 242, 420),
-                    height: geometry.hasNotch ? 154 : 124
-                )
+            if case .bluetoothConnected(_, _, _, let left, let right, let box, _, _) = event.kind {
+                let hasSplit = (left != nil || right != nil || box != nil)
+                if geometry.hasNotch {
+                    return hasSplit
+                        ? CGSize(width: max(geometry.notchWidth + 224, 398), height: max(geometry.notchHeight + 68, 104))
+                        : CGSize(width: max(geometry.notchWidth + 196, 366), height: max(geometry.notchHeight + 56, 92))
+                } else {
+                    return hasSplit
+                        ? CGSize(width: 376, height: 76)
+                        : CGSize(width: 344, height: 64)
+                }
             }
             if case .charging = event.kind {
                 return CGSize(

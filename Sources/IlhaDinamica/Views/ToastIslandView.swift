@@ -507,171 +507,143 @@ struct ToastIslandView: View {
         batteryMain: String?,
         iconName: String
     ) -> some View {
-        let btAccent = Color(red: 0.34, green: 0.72, blue: 1.0)
-        let greenAccent = Color(red: 0.24, green: 0.90, blue: 0.54)
-        let hasSplitBatteries = batteryLeft != nil || batteryRight != nil || batteryCase != nil
+        let splitItems: [(badge: String, value: String)] = [
+            ("E", batteryLeft),
+            ("D", batteryRight),
+            ("C", batteryCase)
+        ].compactMap { badge, val in
+            guard let val, !val.isEmpty else { return nil }
+            return (badge, val)
+        }
+        let singleBattery = batteryMain ?? batteryText
 
-        return VStack(spacing: 10) {
-            HStack(spacing: 12) {
+        return HStack(spacing: 12) {
+            TimelineView(.animation(minimumInterval: 0.14)) { timeline in
+                let t = timeline.date.timeIntervalSinceReferenceDate
+                let pulse = 0.5 + 0.5 * sin(t * 2.6)
                 ZStack {
                     Circle()
                         .fill(
                             RadialGradient(
-                                colors: [btAccent.opacity(0.32), btAccent.opacity(0.08)],
+                                colors: [
+                                    Color.white.opacity(0.11 + 0.04 * pulse),
+                                    Color.white.opacity(0.02),
+                                    .clear
+                                ],
                                 center: .center,
                                 startRadius: 2,
-                                endRadius: 24
+                                endRadius: 20
                             )
                         )
-                        .frame(width: 42, height: 42)
-                        .overlay(
-                            Circle()
-                                .stroke(btAccent.opacity(0.45), lineWidth: 0.9)
-                        )
+                        .frame(width: 38, height: 38)
 
                     Image(systemName: iconName)
-                        .font(.system(size: 18, weight: .semibold))
-                        .foregroundStyle(.white)
+                        .font(.system(size: 22, weight: .regular))
+                        .foregroundStyle(.white.opacity(0.95))
                         .symbolRenderingMode(.hierarchical)
+                        .scaleEffect(0.97 + 0.03 * pulse)
                 }
-
-                VStack(alignment: .leading, spacing: 2.5) {
-                    HStack(spacing: 5) {
-                        Circle()
-                            .fill(greenAccent)
-                            .frame(width: 6, height: 6)
-                        Text(isAudio ? "SAÍDA DE ÁUDIO CONECTADA" : "BLUETOOTH CONECTADO")
-                            .font(.system(size: 9, weight: .bold))
-                            .tracking(0.5)
-                            .foregroundStyle(greenAccent)
-                    }
-
-                    Text(name)
-                        .font(.system(size: 14, weight: .bold))
-                        .foregroundStyle(.white)
-                        .lineLimit(1)
-                }
-
-                Spacer(minLength: 6)
-
-                HStack(spacing: 6) {
-                    if isAudio {
-                        AudioVisualizerView(
-                            isPlaying: true,
-                            accentColor: btAccent,
-                            barCount: 3,
-                            barWidth: 2.2,
-                            maxHeight: 13,
-                            spacing: 2
-                        )
-                    }
-
-                    Text("Ativo")
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundStyle(greenAccent)
-                }
-                .padding(.horizontal, 9)
-                .padding(.vertical, 5)
-                .background(greenAccent.opacity(0.14), in: Capsule())
             }
 
-            if hasSplitBatteries {
-                HStack(spacing: 8) {
-                    batteryTile(label: "FONE ESQ.", valueText: batteryLeft)
-                    batteryTile(label: "FONE DIR.", valueText: batteryRight)
-                    batteryTile(label: "ESTOJO", valueText: batteryCase)
-                }
-            } else if let batteryMain {
-                HStack(spacing: 8) {
-                    batteryTile(label: "BATERIA", valueText: batteryMain)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(name)
+                    .font(.system(size: 13.5, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
 
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text("ROTA DE ÁUDIO")
-                            .font(.system(size: 8.5, weight: .bold))
-                            .tracking(0.4)
-                            .foregroundStyle(Color.white.opacity(0.48))
-                        HStack(spacing: 5) {
-                            Image(systemName: iconName)
-                                .font(.system(size: 11, weight: .semibold))
-                                .foregroundStyle(btAccent)
-                            Text("Selecionado como principal")
-                                .font(.system(size: 11, weight: .semibold))
-                                .foregroundStyle(.white)
-                                .lineLimit(1)
-                        }
+                Text(isAudio ? "Conectado" : "Bluetooth conectado")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(Color.white.opacity(0.48))
+                    .lineLimit(1)
+            }
+            .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+
+            if !splitItems.isEmpty {
+                HStack(spacing: 10) {
+                    ForEach(splitItems, id: \.badge) { item in
+                        miniCircularBatteryRing(badge: item.badge, valueText: item.value)
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 7)
-                    .background(Color.white.opacity(0.075), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                 }
+            } else if let singleBattery, Self.parsePercentFraction(singleBattery) != nil {
+                singleCircularBatteryRing(valueText: singleBattery)
+            } else if isAudio {
+                AudioVisualizerView(
+                    isPlaying: true,
+                    accentColor: .white.opacity(0.78),
+                    barCount: 3,
+                    barWidth: 1.9,
+                    maxHeight: 13,
+                    spacing: 2.2
+                )
+                .padding(.trailing, 4)
             } else {
-                HStack(spacing: 8) {
-                    Image(systemName: iconName)
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(btAccent)
-
-                    Text(batteryText ?? (isAudio ? "Áudio roteado para este dispositivo" : "Conectado e pronto para uso"))
-                        .font(.system(size: 11.5, weight: .semibold))
-                        .foregroundStyle(Color.white.opacity(0.86))
-                        .lineLimit(1)
-
-                    Spacer()
-
-                    Text("Conectado")
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundStyle(btAccent)
+                ZStack {
+                    Circle()
+                        .fill(Color.white.opacity(0.09))
+                        .frame(width: 24, height: 24)
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 10.5, weight: .bold))
+                        .foregroundStyle(Color(red: 0.19, green: 0.82, blue: 0.35))
                 }
-                .padding(.horizontal, 11)
-                .padding(.vertical, 9)
-                .background(Color.white.opacity(0.075), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
             }
         }
         .padding(.horizontal, geometry.hasNotch ? 22 : 18)
-        .padding(.bottom, 12)
+        .padding(.bottom, 6)
         .frame(maxHeight: .infinity)
+        .textSelection(.disabled)
     }
 
-    private func batteryTile(label: String, valueText: String?) -> some View {
-        let fraction = Self.parsePercentFraction(valueText)
-        let tint: Color = {
-            guard let fraction else { return Color.white.opacity(0.42) }
-            if fraction <= 0.18 { return Color(red: 1.0, green: 0.42, blue: 0.22) }
-            if fraction <= 0.35 { return Color(red: 1.0, green: 0.78, blue: 0.24) }
-            return Color(red: 0.24, green: 0.90, blue: 0.54)
-        }()
+    private func miniCircularBatteryRing(badge: String, valueText: String) -> some View {
+        let fraction = Self.parsePercentFraction(valueText) ?? 0
+        let tint = Self.batteryRingTint(for: fraction)
+        let pctDigits = valueText.filter(\.isNumber)
+        let displayPct = pctDigits.isEmpty ? valueText : "\(pctDigits)%"
 
-        return VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Text(label)
-                    .font(.system(size: 8.5, weight: .bold))
-                    .tracking(0.35)
-                    .foregroundStyle(Color.white.opacity(0.50))
-                    .lineLimit(1)
-                Spacer(minLength: 2)
-                Text(valueText ?? "—")
-                    .font(.system(size: 11, weight: .bold, design: .rounded).monospacedDigit())
-                    .foregroundStyle(valueText == nil ? Color.white.opacity(0.45) : .white)
+        return VStack(spacing: 3) {
+            ZStack {
+                Circle()
+                    .stroke(Color.white.opacity(0.14), lineWidth: 2.4)
+                Circle()
+                    .trim(from: 0, to: CGFloat(max(0.05, fraction)))
+                    .stroke(tint, style: StrokeStyle(lineWidth: 2.4, lineCap: .round))
+                    .rotationEffect(.degrees(-90))
+                Text(badge)
+                    .font(.system(size: 8.5, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.88))
             }
+            .frame(width: 26, height: 26)
 
-            GeometryReader { geo in
-                let w = max(1, geo.size.width)
-                ZStack(alignment: .leading) {
-                    Capsule(style: .continuous)
-                        .fill(Color.white.opacity(0.14))
-                    if let fraction {
-                        Capsule(style: .continuous)
-                            .fill(tint)
-                            .frame(width: w * CGFloat(max(0.06, min(1.0, fraction))))
-                    }
-                }
-            }
-            .frame(height: 4.5)
+            Text(displayPct)
+                .font(.system(size: 9.5, weight: .semibold, design: .rounded).monospacedDigit())
+                .foregroundStyle(.white.opacity(0.68))
+                .lineLimit(1)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 9)
-        .padding(.vertical, 7)
-        .background(Color.white.opacity(0.075), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    private func singleCircularBatteryRing(valueText: String) -> some View {
+        let fraction = Self.parsePercentFraction(valueText) ?? 0
+        let tint = Self.batteryRingTint(for: fraction)
+        let pctDigits = valueText.filter(\.isNumber)
+
+        return ZStack {
+            Circle()
+                .stroke(Color.white.opacity(0.14), lineWidth: 2.8)
+            Circle()
+                .trim(from: 0, to: CGFloat(max(0.05, fraction)))
+                .stroke(tint, style: StrokeStyle(lineWidth: 2.8, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+            Text(pctDigits.isEmpty ? valueText : pctDigits)
+                .font(.system(size: 10.5, weight: .bold, design: .rounded).monospacedDigit())
+                .foregroundStyle(.white)
+        }
+        .frame(width: 34, height: 34)
+    }
+
+    private static func batteryRingTint(for fraction: Double?) -> Color {
+        guard let fraction else { return Color.white.opacity(0.45) }
+        if fraction <= 0.18 { return Color(red: 1.0, green: 0.27, blue: 0.23) }
+        if fraction <= 0.35 { return Color(red: 1.0, green: 0.62, blue: 0.04) }
+        return Color(red: 0.19, green: 0.82, blue: 0.35)
     }
 
     private static func parsePercentFraction(_ raw: String?) -> Double? {

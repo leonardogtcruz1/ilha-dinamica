@@ -108,7 +108,14 @@ struct SettingsView: View {
                         }
                     }
                 }
-                Toggle("Aviso de fones Bluetooth / AirPods", isOn: $settings.showBluetoothToasts)
+                HStack {
+                    Toggle("Aviso de fones Bluetooth / AirPods", isOn: $settings.showBluetoothToasts)
+                    Spacer()
+                    Button("Testar") {
+                        audio.triggerBluetoothPreview()
+                    }
+                    .controlSize(.small)
+                }
                 HStack {
                     Toggle("Popup de ligações recebidas e ativas", isOn: $settings.showCallAlerts)
                     Spacer()

@@ -125,6 +125,24 @@ final class AudioControlService: ObservableObject {
         bluetoothDevices.first(where: { $0.isAudio }) ?? bluetoothDevices.first
     }
 
+    func triggerBluetoothPreview() {
+        if let connected = primaryAudioBluetoothDevice {
+            onBluetoothConnected?(connected)
+            return
+        }
+        let sample = BluetoothDeviceInfo(
+            id: "preview-airpods",
+            name: "AirPods Pro",
+            minorType: "Headphones",
+            batteryMain: nil,
+            batteryLeft: "92%",
+            batteryRight: "88%",
+            batteryCase: "74%",
+            isAudio: true
+        )
+        onBluetoothConnected?(sample)
+    }
+
     var isDefaultInputBluetooth: Bool {
         guard let dev = defaultDeviceID(isInput: true) else { return false }
         let transport = deviceTransportType(dev)
