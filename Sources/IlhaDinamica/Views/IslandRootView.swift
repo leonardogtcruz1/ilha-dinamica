@@ -16,6 +16,7 @@ struct IslandRootView: View {
     @ObservedObject var system: SystemMonitorService
     @ObservedObject var weather: WeatherService
     @ObservedObject var recorder: ScreenRecorderService
+    @ObservedObject var calls: CallMonitorService
     @ObservedObject var extraWidgets: ExtraWidgetsService
 
     private var islandShape: NotchIslandShape {
@@ -204,7 +205,7 @@ struct IslandRootView: View {
             )
             .contentShape(islandShape)
             .onTapGesture {
-                if case .toast(let event) = coordinator.mode, event.kind.isInteractiveControlHUD {
+                if case .toast(let event) = coordinator.mode, event.kind.blocksTapToExpand {
                     return
                 }
                 if coordinator.mode != .expanded {
@@ -238,7 +239,8 @@ struct IslandRootView: View {
                 pomodoro: pomodoro,
                 battery: battery,
                 audio: audio,
-                recorder: recorder
+                recorder: recorder,
+                calls: calls
             )
 
         case .toast(let event):
@@ -248,6 +250,7 @@ struct IslandRootView: View {
                 music: music,
                 battery: battery,
                 audio: audio,
+                calls: calls,
                 coordinator: coordinator,
                 settings: settings
             )
@@ -268,6 +271,7 @@ struct IslandRootView: View {
                 system: system,
                 weather: weather,
                 recorder: recorder,
+                calls: calls,
                 extraWidgets: extraWidgets
             )
         }

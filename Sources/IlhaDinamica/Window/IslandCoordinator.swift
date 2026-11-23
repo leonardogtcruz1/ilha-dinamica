@@ -46,6 +46,7 @@ final class IslandCoordinator: ObservableObject {
     let system: SystemMonitorService
     let weather: WeatherService
     let recorder: ScreenRecorderService
+    let calls: CallMonitorService
     let extraWidgets: ExtraWidgetsService
 
     weak var panel: IslandPanel?
@@ -81,6 +82,7 @@ final class IslandCoordinator: ObservableObject {
         system: SystemMonitorService,
         weather: WeatherService,
         recorder: ScreenRecorderService,
+        calls: CallMonitorService,
         extraWidgets: ExtraWidgetsService
     ) {
         self.settings = settings
@@ -96,6 +98,7 @@ final class IslandCoordinator: ObservableObject {
         self.system = system
         self.weather = weather
         self.recorder = recorder
+        self.calls = calls
         self.extraWidgets = extraWidgets
         self.geometry = NotchGeometry.current()
         self.isShowingPresetHome = settings.layoutPreset.hasHomeDashboard
@@ -136,6 +139,16 @@ final class IslandCoordinator: ObservableObject {
             }
 
         case .toast(let event):
+            if event.kind.isIncomingCall {
+                if geometry.hasNotch {
+                    return CGSize(
+                        width: max(geometry.notchWidth + 248, 434),
+                        height: max(geometry.notchHeight + 78, 116)
+                    )
+                } else {
+                    return CGSize(width: 416, height: 86)
+                }
+            }
             if case .bluetoothConnected = event.kind {
                 return CGSize(
                     width: max(geometry.notchWidth + 242, 420),
@@ -169,23 +182,23 @@ final class IslandCoordinator: ObservableObject {
 
         case .expanded:
             let preset = settings.layoutPreset
-            let recordingExtra: CGFloat = recorder.isRecording ? 32 : 0
+            let liveBannerExtra: CGFloat = (recorder.isRecording ? 32 : 0) + (calls.isInActiveCall ? 32 : 0)
             if isEditingWidgets {
-                let editorExtraHeight: CGFloat = recorder.isRecording ? 154 : 174
+                let editorExtraHeight: CGFloat = liveBannerExtra > 0 ? 154 : 174
                 return CGSize(
                     width: 632,
-                    height: max(geometry.notchHeight + 214, 246) + recordingExtra + editorExtraHeight
+                    height: max(geometry.notchHeight + 214, 246) + liveBannerExtra + editorExtraHeight
                 )
             }
             if isPresetsOpen {
                 return CGSize(
                     width: 616,
-                    height: 384 + recordingExtra
+                    height: 384 + liveBannerExtra
                 )
             }
             return CGSize(
                 width: preset.expandedWidth,
-                height: max(geometry.notchHeight + (preset.expandedBaseHeight - 32), preset.expandedBaseHeight) + recordingExtra
+                height: max(geometry.notchHeight + (preset.expandedBaseHeight - 32), preset.expandedBaseHeight) + liveBannerExtra
             )
         }
     }
@@ -195,7 +208,7 @@ final class IslandCoordinator: ObservableObject {
         let pomodoroActive = settings.enablePomodoroModule && pomodoro.isRunning
         let batteryActive = settings.enableBatteryModule && (battery.isCharging || battery.percentage <= 20)
         let micActive = audio.isMicMuted
-        return recorder.isRecording || musicActive || pomodoroActive || batteryActive || micActive
+        return recorder.isRecording || calls.isInActiveCall || musicActive || pomodoroActive || batteryActive || micActive
     }
 
     var restingMode: IslandMode {
@@ -607,7 +620,7 @@ final class IslandCoordinator: ObservableObject {
 
     func showToast(_ event: ToastEvent, duration: TimeInterval? = nil) {
         guard !isTemporarilyHidden else { return }
-        if case .expanded = mode {
+        if case .expanded = mode, !event.kind.isIncomingCall {
             return
         }
 
@@ -629,6 +642,16 @@ final class IslandCoordinator: ObservableObject {
         }
     }
 
+    func dismissIncomingCallToast() {
+        if case .toast(let current) = mode, current.kind.isIncomingCall {
+            toastDismissTask?.cancel()
+            toastDismissTask = nil
+            withAnimation(settings.collapseSpring) {
+                mode = restingMode
+            }
+        }
+    }
+
     private func scheduleToastDismiss(for eventID: UUID, after delaySeconds: TimeInterval) {
         toastDismissTask?.cancel()
         toastDismissTask = Task { [weak self] in
@@ -638,7 +661,8 @@ final class IslandCoordinator: ObservableObject {
             if case .toast(let current) = self.mode, current.id == eventID {
                 guard !self.audio.isDraggingVolume,
                       !self.audio.isDraggingBrightness,
-                      !(current.kind.isInteractiveControlHUD && self.wasMouseInside) else {
+                      !(current.kind.isInteractiveControlHUD && self.wasMouseInside),
+                      !(current.kind.isIncomingCall && self.calls.isIncomingCallRinging) else {
                     return
                 }
                 withAnimation(self.settings.collapseSpring) {
@@ -689,6 +713,18 @@ final class IslandCoordinator: ObservableObject {
                 withAnimation(self.settings.sizeSpring) {
                     self.objectWillChange.send()
                 }
+            }
+            .store(in: &cancellables)
+
+        calls.$isInActiveCall
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                guard let self else { return }
+                withAnimation(self.settings.sizeSpring) {
+                    self.objectWillChange.send()
+                }
+                self.syncRestingMode(animated: true)
             }
             .store(in: &cancellables)
 
@@ -887,6 +923,13 @@ final class IslandCoordinator: ObservableObject {
             return nil
         }()
 
+        let blocksHoverExpandToast: Bool = {
+            if case .toast(let event) = mode {
+                return event.kind.blocksTapToExpand
+            }
+            return false
+        }()
+
         if isInside {
             wasMouseInside = true
             hoverCollapseTask?.cancel()
@@ -895,6 +938,9 @@ final class IslandCoordinator: ObservableObject {
             if interactiveHudEvent != nil {
                 toastDismissTask?.cancel()
                 toastDismissTask = nil
+                hoverExpandTask?.cancel()
+                hoverExpandTask = nil
+            } else if blocksHoverExpandToast {
                 hoverExpandTask?.cancel()
                 hoverExpandTask = nil
             } else if mode != .expanded
@@ -1012,7 +1058,7 @@ final class IslandCoordinator: ObservableObject {
             }
             guard !Task.isCancelled, let self else { return }
             self.hoverExpandTask = nil
-            if case .toast(let event) = self.mode, event.kind.isInteractiveControlHUD {
+            if case .toast(let event) = self.mode, event.kind.blocksTapToExpand {
                 return
             }
             guard self.wasMouseInside,

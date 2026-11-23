@@ -32,7 +32,9 @@ Native **Dynamic Island** for macOS engineered with **SwiftUI** and **AppKit**, 
 - Switch in one click between **DynamicLake**, **Atoll**, **SuperIsland**, **Glass Studio**, **Aurora Pulse**, **Creator Deck**, **Central Pro**, **Zen Titanium**, and **Obsidian**.
 - Customize **Surface & Border**, **Buttons & Tabs**, and **Sliders & Progress Bars** independently with live visual preview.
 
-### 4. Interactive Hardware HUD & Live Telemetry
+### 4. Incoming & Active Call Popups + Live Hardware Telemetry
+- **iPhone-Style Call Alerts:** Automatically detects incoming calls from **iPhone Continuity / FaceTime**, **WhatsApp**, **Discord**, **Zoom**, **Microsoft Teams**, and **Telegram** (combining CoreAudio process telemetry and NotificationCenter Accessibility inspection) with one-click **Answer** and **Decline** notch actions plus a test preview trigger in Preferences.
+- **Ongoing Call Pill:** Switches the compact island into a pulsing green phone indicator with a live call duration timer (`MM:SS`) and a one-click microphone mute & app jump strip when expanded.
 - **Volume & Brightness HUD:** Drag sliders directly inside the notch popup toast with your mouse, click to mute, or jump into the Audio & Display view — replacing default macOS bezel overlays via a hardware media-key event tap.
 - **USB-C Fast-Charging Card:** Real-time wattage, voltage, estimated time to full, battery health, and charge cycle count.
 - **Bluetooth & AirPods Popups:** Split Left / Right / Case battery notifications on connection.
@@ -65,6 +67,7 @@ Sources/IlhaDinamica/
 │   ├── MediaKeyInterceptor.swift      # Hardware volume & brightness key interception
 │   ├── AudioControlService.swift      # CoreAudio volume, mute, output devices & display brightness
 │   ├── BatteryService.swift           # IOKit power telemetry & USB-C charging diagnostics
+│   ├── CallMonitorService.swift       # CoreAudio + AXUIElement incoming/active call detector
 │   ├── ScreenRecorderService.swift    # ScreenCaptureKit recorder
 │   └── ...                            # Shelf, Clipboard, Calendar, Notes, Pomodoro, Weather, System, Camera
 └── Views/
@@ -118,7 +121,7 @@ Out of the box, the island displays **video artwork, title, channel name, play/p
 | **Language & UI** | Swift 5.10, SwiftUI, AppKit (`NSPanel`, `MenuBarExtra`) |
 | **Audio & Media** | CoreAudio Process Object API, IOKit HID media keys, AppleScript, public oEmbed APIs |
 | **Hardware & Capture** | ScreenCaptureKit, AVFoundation, CoreImage (`CIAreaAverage`), IOKit Power Sources |
-| **System Integration** | Carbon (`RegisterEventHotKey`), EventKit, ServiceManagement |
+| **System Integration** | Carbon (`RegisterEventHotKey`), Accessibility AXUIElement, CoreAudio Telemetry, EventKit, ServiceManagement |
 
 ---
 

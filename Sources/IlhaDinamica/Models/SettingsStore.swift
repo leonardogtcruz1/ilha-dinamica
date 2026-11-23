@@ -20,6 +20,7 @@ final class SettingsStore: ObservableObject {
         static let showHudToasts = "settings.showHudToasts"
         static let replaceSystemHUD = "settings.replaceSystemHUD"
         static let showBluetoothToasts = "settings.showBluetoothToasts"
+        static let showCallAlerts = "settings.showCallAlerts"
         static let showMeetingToasts = "settings.showMeetingToasts"
         static let showWeatherInHeader = "settings.showWeatherInHeader"
         static let weatherCity = "settings.weatherCity"
@@ -112,6 +113,10 @@ final class SettingsStore: ObservableObject {
 
     @Published var showBluetoothToasts: Bool {
         didSet { save(showBluetoothToasts, forKey: Keys.showBluetoothToasts) }
+    }
+
+    @Published var showCallAlerts: Bool {
+        didSet { save(showCallAlerts, forKey: Keys.showCallAlerts) }
     }
 
     @Published var showMeetingToasts: Bool {
@@ -273,6 +278,7 @@ final class SettingsStore: ObservableObject {
         self.showHudToasts = defaults.object(forKey: Keys.showHudToasts) as? Bool ?? true
         self.replaceSystemHUD = defaults.object(forKey: Keys.replaceSystemHUD) as? Bool ?? true
         self.showBluetoothToasts = defaults.object(forKey: Keys.showBluetoothToasts) as? Bool ?? true
+        self.showCallAlerts = defaults.object(forKey: Keys.showCallAlerts) as? Bool ?? true
         self.showMeetingToasts = defaults.object(forKey: Keys.showMeetingToasts) as? Bool ?? true
         self.showWeatherInHeader = defaults.object(forKey: Keys.showWeatherInHeader) as? Bool ?? true
         self.weatherCity = defaults.string(forKey: Keys.weatherCity) ?? ""

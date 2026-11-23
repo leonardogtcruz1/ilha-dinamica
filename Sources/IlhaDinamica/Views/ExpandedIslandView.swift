@@ -15,6 +15,7 @@ struct ExpandedIslandView: View {
     @ObservedObject var system: SystemMonitorService
     @ObservedObject var weather: WeatherService
     @ObservedObject var recorder: ScreenRecorderService
+    @ObservedObject var calls: CallMonitorService
     @ObservedObject var extraWidgets: ExtraWidgetsService
 
     var body: some View {
@@ -51,6 +52,12 @@ struct ExpandedIslandView: View {
 
             if recorder.isRecording {
                 recordingLiveBanner
+                    .padding(.horizontal, coordinator.geometry.hasNotch ? 26 : 16)
+                    .padding(.top, 5)
+            }
+
+            if calls.isInActiveCall {
+                activeCallLiveBanner
                     .padding(.horizontal, coordinator.geometry.hasNotch ? 26 : 16)
                     .padding(.top, 5)
             }
@@ -1070,6 +1077,64 @@ struct ExpandedIslandView: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 4)
         .background(Color(red: 1.0, green: 0.24, blue: 0.22).opacity(0.18), in: Capsule())
+    }
+
+    private var activeCallLiveBanner: some View {
+        let callGreen = Color(red: 0.22, green: 0.90, blue: 0.48)
+        return HStack(spacing: 8) {
+            TimelineView(.animation(minimumInterval: 0.14)) { timeline in
+                let t = timeline.date.timeIntervalSinceReferenceDate
+                let pulse = 0.55 + 0.45 * ((sin(t * 4.0) + 1.0) * 0.5)
+                Image(systemName: "phone.fill")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(callGreen.opacity(pulse))
+            }
+
+            Text("Em chamada • \(calls.activeCallTitle) • \(calls.formattedActiveDuration)")
+                .font(.system(size: 11, weight: .semibold, design: .rounded).monospacedDigit())
+                .foregroundStyle(.white)
+                .lineLimit(1)
+
+            Spacer()
+
+            Button {
+                audio.toggleMicMute()
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: audio.isMicMuted ? "mic.slash.fill" : "mic.fill")
+                        .font(.system(size: 8.5, weight: .bold))
+                    Text(audio.isMicMuted ? "Mudo" : "Mic")
+                        .font(.system(size: 10.5, weight: .bold))
+                }
+                .foregroundStyle(.white)
+                .padding(.horizontal, 9)
+                .padding(.vertical, 3)
+                .background(
+                    (audio.isMicMuted ? Color.red : Color.white.opacity(0.16)),
+                    in: Capsule()
+                )
+            }
+            .buttonStyle(.plain)
+
+            Button {
+                calls.openActiveCallApp()
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "arrow.up.forward.app.fill")
+                        .font(.system(size: 8.5, weight: .bold))
+                    Text("Abrir")
+                        .font(.system(size: 10.5, weight: .bold))
+                }
+                .foregroundStyle(Color(red: 0.03, green: 0.14, blue: 0.06))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 3)
+                .background(callGreen, in: Capsule())
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 4)
+        .background(callGreen.opacity(0.18), in: Capsule())
     }
 
     private func hasBadge(for tab: IslandTab) -> Bool {

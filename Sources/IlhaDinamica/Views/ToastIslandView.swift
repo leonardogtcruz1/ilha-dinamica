@@ -7,6 +7,7 @@ struct ToastIslandView: View {
     @ObservedObject var music: MusicService
     @ObservedObject var battery: BatteryService
     @ObservedObject var audio: AudioControlService
+    @ObservedObject var calls: CallMonitorService
     @ObservedObject var coordinator: IslandCoordinator
     @ObservedObject var settings: SettingsStore
 
@@ -21,6 +22,18 @@ struct ToastIslandView: View {
                 volumeHudRow()
             } else if case .brightness = event.kind {
                 brightnessHudRow()
+            } else if case .incomingCall(
+                let callerName,
+                let sourceName,
+                let isVideo,
+                let canControlButtons
+            ) = event.kind {
+                incomingCallCard(
+                    callerName: callerName,
+                    sourceName: sourceName,
+                    isVideo: isVideo,
+                    canControlButtons: canControlButtons
+                )
             } else if case .charging(let percent, let watts) = event.kind {
                 chargingConnectedCard(
                     fallbackPercent: percent,
@@ -136,6 +149,110 @@ struct ToastIslandView: View {
         .padding(.horizontal, geometry.hasNotch ? 22 : 18)
         .frame(maxHeight: .infinity)
         .textSelection(.disabled)
+    }
+
+    private func incomingCallCard(
+        callerName: String,
+        sourceName: String,
+        isVideo: Bool,
+        canControlButtons: Bool
+    ) -> some View {
+        let callGreen = Color(red: 0.22, green: 0.90, blue: 0.48)
+        let declineRed = Color(red: 1.0, green: 0.24, blue: 0.22)
+        let initials = callerInitials(from: callerName)
+
+        return HStack(spacing: 12) {
+            TimelineView(.animation(minimumInterval: 0.12)) { timeline in
+                let t = timeline.date.timeIntervalSinceReferenceDate
+                let pulse = 0.45 + 0.55 * ((sin(t * 4.2) + 1.0) * 0.5)
+                ZStack {
+                    Circle()
+                        .stroke(callGreen.opacity(0.36 * pulse), lineWidth: 2)
+                        .frame(width: 48, height: 48)
+                        .scaleEffect(0.95 + 0.08 * pulse)
+                    Circle()
+                        .fill(callGreen.opacity(0.20))
+                        .frame(width: 40, height: 40)
+                    if let initials {
+                        Text(initials)
+                            .font(.system(size: 14, weight: .bold, design: .rounded))
+                            .foregroundStyle(callGreen)
+                    } else {
+                        Image(systemName: isVideo ? "video.fill" : "phone.arrow.down.left.fill")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(callGreen)
+                    }
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 2.5) {
+                Text("\(sourceName.uppercased()) • \(isVideo ? "VÍDEO" : "LIGAÇÃO")")
+                    .font(.system(size: 9.5, weight: .bold))
+                    .tracking(0.5)
+                    .foregroundStyle(callGreen)
+                    .lineLimit(1)
+
+                Text(callerName)
+                    .font(.system(size: 15, weight: .bold))
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+
+                Text("Chamada recebida • Tocando...")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(Color.white.opacity(0.62))
+                    .lineLimit(1)
+            }
+            .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+
+            HStack(spacing: 9) {
+                Button {
+                    calls.declineIncomingCall()
+                } label: {
+                    ZStack {
+                        Circle()
+                            .fill(declineRed)
+                            .frame(width: 36, height: 36)
+                        Image(systemName: "phone.down.fill")
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundStyle(.white)
+                    }
+                }
+                .buttonStyle(.plain)
+                .help("Recusar")
+
+                Button {
+                    calls.acceptIncomingCall()
+                } label: {
+                    ZStack {
+                        Circle()
+                            .fill(callGreen)
+                            .frame(width: 36, height: 36)
+                        Image(systemName: isVideo ? "video.fill" : "phone.fill")
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundStyle(Color(red: 0.03, green: 0.14, blue: 0.06))
+                    }
+                }
+                .buttonStyle(.plain)
+                .help(canControlButtons ? "Atender" : "Abrir chamada")
+            }
+        }
+        .padding(.horizontal, geometry.hasNotch ? 22 : 18)
+        .frame(maxHeight: .infinity)
+        .textSelection(.disabled)
+    }
+
+    private func callerInitials(from name: String) -> String? {
+        let lettersOnlyWords = name
+            .split(separator: " ")
+            .compactMap { part -> String? in
+                guard let first = part.first, first.isLetter else { return nil }
+                return String(first).uppercased()
+            }
+        guard !lettersOnlyWords.isEmpty else { return nil }
+        if lettersOnlyWords.count == 1 {
+            return lettersOnlyWords[0]
+        }
+        return lettersOnlyWords[0] + lettersOnlyWords[lettersOnlyWords.count - 1]
     }
 
     private func chargingConnectedCard(
@@ -774,6 +891,8 @@ struct ToastIslandView: View {
             return Color(red: 0.22, green: 0.90, blue: 0.48)
         case .recordingError:
             return Color(red: 1.0, green: 0.30, blue: 0.26)
+        case .incomingCall:
+            return Color(red: 0.22, green: 0.90, blue: 0.48)
         }
     }
 
@@ -807,6 +926,8 @@ struct ToastIslandView: View {
             return "record.circle.fill"
         case .recordingError:
             return "exclamationmark.triangle.fill"
+        case .incomingCall(_, _, let isVideo, _):
+            return isVideo ? "video.fill" : "phone.arrow.down.left.fill"
         }
     }
 
@@ -840,6 +961,8 @@ struct ToastIslandView: View {
             return "Gravação salva"
         case .recordingError:
             return "Erro na gravação"
+        case .incomingCall(let callerName, _, _, _):
+            return callerName
         }
     }
 
@@ -874,6 +997,8 @@ struct ToastIslandView: View {
             return filename
         case .recordingError(let message):
             return message
+        case .incomingCall(_, let sourceName, _, _):
+            return "\(sourceName) • Chamada recebida"
         }
     }
 
@@ -942,7 +1067,7 @@ struct ToastIslandView: View {
         case .recordingError:
             pill("!", color: accentColor)
 
-        case .volume, .brightness:
+        case .volume, .brightness, .incomingCall:
             EmptyView()
         }
     }

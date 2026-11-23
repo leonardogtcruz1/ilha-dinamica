@@ -311,6 +311,12 @@ enum ToastKind: Equatable {
     case shelfAdded(count: Int)
     case recordingSaved(filename: String)
     case recordingError(message: String)
+    case incomingCall(
+        callerName: String,
+        sourceName: String,
+        isVideo: Bool,
+        canControlButtons: Bool
+    )
 
     var isQuickHUD: Bool {
         switch self {
@@ -328,6 +334,15 @@ enum ToastKind: Equatable {
         default:
             return false
         }
+    }
+
+    var isIncomingCall: Bool {
+        if case .incomingCall = self { return true }
+        return false
+    }
+
+    var blocksTapToExpand: Bool {
+        isInteractiveControlHUD || isIncomingCall
     }
 }
 

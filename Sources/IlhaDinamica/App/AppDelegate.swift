@@ -17,6 +17,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     let system: SystemMonitorService
     let weather: WeatherService
     let recorder: ScreenRecorderService
+    let calls: CallMonitorService
     let extraWidgets: ExtraWidgetsService
     let mediaKeys: MediaKeyInterceptor
     let coordinator: IslandCoordinator
@@ -41,6 +42,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         let system = SystemMonitorService()
         let weather = WeatherService(settings: settings)
         let recorder = ScreenRecorderService(settings: settings, audio: audio)
+        let calls = CallMonitorService()
         let extraWidgets = ExtraWidgetsService(systemMonitor: system)
         let mediaKeys = MediaKeyInterceptor(settings: settings, audio: audio)
 
@@ -58,6 +60,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             system: system,
             weather: weather,
             recorder: recorder,
+            calls: calls,
             extraWidgets: extraWidgets
         )
 
@@ -74,6 +77,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         self.system = system
         self.weather = weather
         self.recorder = recorder
+        self.calls = calls
         self.extraWidgets = extraWidgets
         self.mediaKeys = mediaKeys
         self.coordinator = coordinator
@@ -129,7 +133,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
                 battery: battery,
                 audio: audio,
                 weather: weather,
-                mediaKeys: mediaKeys
+                mediaKeys: mediaKeys,
+                calls: calls
             )
             let hosting = NSHostingController(rootView: view)
             let window = NSWindow(contentViewController: hosting)
@@ -267,6 +272,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
                 duration: 4.0
             )
         }
+
+        calls.onIncomingCallStarted = { [weak self] callerName, sourceName, isVideo, canControlButtons in
+            guard let self, self.settings.showCallAlerts else { return }
+            self.coordinator.showToast(
+                ToastEvent(kind: .incomingCall(
+                    callerName: callerName,
+                    sourceName: sourceName,
+                    isVideo: isVideo,
+                    canControlButtons: canControlButtons
+                )),
+                duration: 35.0
+            )
+        }
+
+        calls.onIncomingCallEnded = { [weak self] in
+            self?.coordinator.dismissIncomingCallToast()
+        }
     }
 
     private func setupIslandPanel() {
@@ -285,6 +307,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             system: system,
             weather: weather,
             recorder: recorder,
+            calls: calls,
             extraWidgets: extraWidgets
         )
         let panel = IslandPanel(rootView: rootView, geometry: coordinator.geometry)

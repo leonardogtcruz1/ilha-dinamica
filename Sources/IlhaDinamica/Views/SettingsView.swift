@@ -7,6 +7,7 @@ struct SettingsView: View {
     @ObservedObject var audio: AudioControlService
     @ObservedObject var weather: WeatherService
     @ObservedObject var mediaKeys: MediaKeyInterceptor
+    @ObservedObject var calls: CallMonitorService
 
     var body: some View {
         Form {
@@ -108,6 +109,14 @@ struct SettingsView: View {
                     }
                 }
                 Toggle("Aviso de fones Bluetooth / AirPods", isOn: $settings.showBluetoothToasts)
+                HStack {
+                    Toggle("Popup de ligações recebidas e ativas", isOn: $settings.showCallAlerts)
+                    Spacer()
+                    Button("Testar") {
+                        calls.triggerPreviewCall()
+                    }
+                    .controlSize(.small)
+                }
                 Toggle("Lembrete de reuniões (5 min antes)", isOn: $settings.showMeetingToasts)
                 Toggle("Aviso ao trocar de música", isOn: $settings.showTrackChangeToast)
                 Toggle("Avisos de bateria e carregador", isOn: $settings.showBatteryToasts)

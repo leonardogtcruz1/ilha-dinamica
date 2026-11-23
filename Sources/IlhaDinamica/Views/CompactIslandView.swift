@@ -8,6 +8,7 @@ struct CompactIslandView: View {
     @ObservedObject var battery: BatteryService
     @ObservedObject var audio: AudioControlService
     @ObservedObject var recorder: ScreenRecorderService
+    @ObservedObject var calls: CallMonitorService
 
     private var showMusic: Bool {
         settings.enableMusicModule && (music.isPlaying || music.hasTrack)
@@ -53,6 +54,26 @@ struct CompactIslandView: View {
                     Circle()
                         .fill(Color(red: 1.0, green: 0.26, blue: 0.24).opacity(pulse))
                         .frame(width: 9.5, height: 9.5)
+                }
+            }
+        } else if calls.isInActiveCall {
+            TimelineView(.animation(minimumInterval: 0.14)) { timeline in
+                let t = timeline.date.timeIntervalSinceReferenceDate
+                let pulse = 0.55 + 0.45 * ((sin(t * 4.0) + 1.0) * 0.5)
+                HStack(spacing: 4) {
+                    ZStack {
+                        Circle()
+                            .stroke(Color(red: 0.22, green: 0.90, blue: 0.48).opacity(0.45 * pulse), lineWidth: 1.8)
+                            .frame(width: 17, height: 17)
+                        Image(systemName: "phone.fill")
+                            .font(.system(size: 9.5, weight: .bold))
+                            .foregroundStyle(Color(red: 0.24, green: 0.92, blue: 0.50))
+                    }
+                    if audio.isMicMuted {
+                        Image(systemName: "mic.slash.fill")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(Color.red)
+                    }
                 }
             }
         } else if showMusic {
@@ -118,6 +139,11 @@ struct CompactIslandView: View {
             Text(recorder.formattedElapsed)
                 .font(.system(size: 11.5, weight: .bold, design: .rounded).monospacedDigit())
                 .foregroundStyle(Color(red: 1.0, green: 0.30, blue: 0.28))
+                .lineLimit(1)
+        } else if calls.isInActiveCall {
+            Text(calls.formattedActiveDuration)
+                .font(.system(size: 11.5, weight: .bold, design: .rounded).monospacedDigit())
+                .foregroundStyle(Color(red: 0.24, green: 0.92, blue: 0.50))
                 .lineLimit(1)
         } else if showPomodoro {
             Text(pomodoro.formattedRemaining)
